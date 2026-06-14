@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+*.local
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# License-gated model files. SMPL pkl and the EDGE checkpoint must never be
+# committed (non-commercial licenses, section 1 and 6 of the brief). Read SMPL
+# from SMPL_MODEL_DIR and pull the checkpoint per docs/SETUP.md instead.
+*.pkl
+*.pt
+*.pth
+*.ckpt
+backend/checkpoints/
+
+# Local dev storage (uploads and generated outputs before object storage)
+backend/uploads/
+backend/outputs/
+
+# OS
+.DS_Store
