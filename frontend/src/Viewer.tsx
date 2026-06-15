@@ -5,18 +5,29 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { resolveTargetBones, buildRetargetTable, smplAnimGlobals, applyFrame } from './retarget';
 import type { Motion } from './api';
 
-export default function Viewer({ motion }: { motion: Motion | null }) {
-  const mountRef = useRef<HTMLDivElement>(null);
-  const motionRef = useRef<Motion | null>(motion);
-  const clockRef = useRef<THREE.Clock | null>(null);
-  if (!clockRef.current) clockRef.current = new THREE.Clock();
+type Table = ReturnType<typeof buildRetargetTable>;
 
-  // Keep the latest motion available to the render loop, and restart timing
-  // when it changes so a new clip plays from the top.
+// Pose the character to one frame. frame may be fractional (App's clock); we
+// floor and wrap it. Rotations only for now; root translation is Phase 4 work.
+function showFrame(table: Table, motion: Motion, frame: number) {
+  const f = ((Math.floor(frame) % motion.num_frames) + motion.num_frames) % motion.num_frames;
+  applyFrame(table, smplAnimGlobals(motion.smpl_poses[f]));
+}
+
+// Controlled viewer: App owns playback and passes the current frame. The WebGL
+// loop renders continuously (so orbit stays live); the pose updates whenever
+// the frame or motion changes.
+export default function Viewer({ motion, frame }: { motion: Motion | null; frame: number }) {
+  const mountRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<Table | null>(null);
+  const motionRef = useRef<Motion | null>(motion);
+  const frameRef = useRef(frame);
+
   useEffect(() => {
     motionRef.current = motion;
-    clockRef.current!.start();
-  }, [motion]);
+    frameRef.current = frame;
+    if (tableRef.current && motion) showFrame(tableRef.current, motion, frame);
+  }, [motion, frame]);
 
   useEffect(() => {
     const mount = mountRef.current!;
@@ -57,15 +68,16 @@ export default function Viewer({ motion }: { motion: Motion | null }) {
       scene.add(grid);
     }
 
-    let table: ReturnType<typeof buildRetargetTable> | null = null;
     new GLTFLoader().load(
       '/character.glb',
       (g) => {
         const root = g.scene;
         scene.add(root);
         root.updateMatrixWorld(true);
-        table = buildRetargetTable(resolveTargetBones(root));
+        const table = buildRetargetTable(resolveTargetBones(root));
+        tableRef.current = table;
         frameObject(root);
+        if (motionRef.current) showFrame(table, motionRef.current, frameRef.current);
         console.log(`retarget: mapped ${table.length} of 22 SMPL bones`);
       },
       undefined,
@@ -75,12 +87,6 @@ export default function Viewer({ motion }: { motion: Motion | null }) {
     let raf = 0;
     function render() {
       raf = requestAnimationFrame(render);
-      const m = motionRef.current;
-      if (table && m) {
-        // Rotations only for now; root translation (bob/sway) is Phase 4.
-        const f = Math.floor(clockRef.current!.getElapsedTime() * m.fps) % m.num_frames;
-        applyFrame(table, smplAnimGlobals(m.smpl_poses[f]));
-      }
       controls.update();
       renderer.render(scene, camera);
     }

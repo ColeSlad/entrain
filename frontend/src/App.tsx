@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { ChangeEvent, CSSProperties } from 'react';
 import Viewer from './Viewer';
+import Transport from './Transport';
 import { uploadSong, pollJob, type Motion } from './api';
 
 export default function App() {
   const [motion, setMotion] = useState<Motion | null>(null);
+  const [frame, setFrame] = useState(0);
+  const [playing, setPlaying] = useState(true);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -17,6 +20,22 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  // The playback clock: advance the frame while playing. App owns this so the
+  // transport (play/pause/scrub) and the viewer share one source of truth.
+  useEffect(() => {
+    if (!playing || !motion) return;
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = (now - last) / 1000;
+      last = now;
+      setFrame((f) => (f + dt * motion.fps) % motion.num_frames);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, motion]);
+
   async function onFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -25,7 +44,10 @@ export default function App() {
       setStatus('uploading...');
       const jobId = await uploadSong(file);
       setStatus('generating...');
-      setMotion(await pollJob(jobId));
+      const result = await pollJob(jobId);
+      setMotion(result);
+      setFrame(0);
+      setPlaying(true);
       setStatus(`playing ${file.name}`);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'failed');
@@ -36,7 +58,7 @@ export default function App() {
 
   return (
     <>
-      <Viewer motion={motion} />
+      <Viewer motion={motion} frame={frame} />
       <div style={bar}>
         <label style={button}>
           {busy ? 'working...' : 'Upload song'}
@@ -45,6 +67,16 @@ export default function App() {
         </label>
         <span style={{ color: '#cfd2d6' }}>{status}</span>
       </div>
+      {motion && (
+        <Transport
+          playing={playing}
+          frame={frame}
+          numFrames={motion.num_frames}
+          fps={motion.fps}
+          onTogglePlay={() => setPlaying((p) => !p)}
+          onSeek={(f) => { setPlaying(false); setFrame(f); }}
+        />
+      )}
     </>
   );
 }
