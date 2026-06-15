@@ -22,14 +22,23 @@ More variables (Modal, object storage) arrive in Phase 3.
 
 ## 1. SMPL body model
 
-The dance model and the Stage 0 render both need this.
+Needed for the Stage 0 SMPL mesh render (Phase 1). Note: EDGE generation does
+not need this. The EDGE README has no SMPL download step; test.py emits SMPL
+parameters from an internal skeleton. SMPL is only required when we render a
+body mesh ourselves.
 
 1. Register and accept the license at smpl.is.tue.mpg.de.
-2. Download the SMPL body model. Neutral is enough for the MVP; male and female
-   are optional.
-3. Place the `.pkl` files under `SMPL_MODEL_DIR`. Match the exact filenames and
-   folder layout the EDGE repo expects (see its README), since EDGE loads the
-   SMPL pkl from a specific path.
+2. Download "version 1.1.0 for Python 2.7 (female/male/neutral, 300 shape PCs)"
+   under SMPL for Python Users. 1.1.0 is the only option with the neutral model.
+   The "Python 2.7" label is for the sample scripts; the pkl loads in Python 3
+   with `pickle.load(f, encoding='latin1')`.
+3. Rename the neutral file (e.g. `basicmodel_neutral_lbs_10_207_0_v1.1.0.pkl`)
+   to `SMPL_NEUTRAL.pkl` and place it in `backend/data/smpl/`. Confirm the exact
+   name against the renderer when Phase 1 lands. Then point the env var there:
+
+   ```
+   export SMPL_MODEL_DIR=/Users/colesladowsky/Desktop/Projects/entrain/backend/data/smpl
+   ```
 
 These files are non-commercial-licensed and must not be committed. They are
 already gitignored (`*.pkl`).
@@ -38,18 +47,31 @@ already gitignored (`*.pkl`).
 
 The primary dance generator. Source: `Stanford-TML/EDGE`.
 
-1. Follow the EDGE README to download the pretrained checkpoint.
-2. Place it under `backend/checkpoints/` (gitignored).
-3. Pin the exact file and record its hash so a swapped checkpoint is caught:
+1. Clone the repo: `git clone https://github.com/Stanford-TML/EDGE.git`.
+2. Download the checkpoint. EDGE ships `download_model.sh`, but its wget Google
+   Drive trick often fails on the confirm step. gdown is more reliable:
 
    ```
-   shasum -a 256 backend/checkpoints/<checkpoint-file>
+   pip install gdown
+   gdown 1BAR712cVEqB8GR37fcEihRV_xOC-fZrZ -O checkpoint.pt
+   ```
+
+   Or download in a browser from
+   https://drive.google.com/file/d/1BAR712cVEqB8GR37fcEihRV_xOC-fZrZ/view
+   (saves as `checkpoint.pt`).
+3. Move it to `backend/checkpoints/checkpoint.pt` (gitignored).
+4. Pin the file and record its hash so a swapped checkpoint is caught:
+
+   ```
+   shasum -a 256 backend/checkpoints/checkpoint.pt
    ```
 
    Recorded hash: TODO, fill in after the first download.
 
-The EDGE weights are for research and non-commercial use. Do not redistribute
-or bundle them. Note the license terms from the EDGE repo.
+Running EDGE also needs its environment: Python 3.7+, PyTorch 1.12.1, pytorch3d,
+jukemirlib, and accelerate (run `accelerate config`, fp16). modal_app.py wraps
+this. The EDGE weights are for research and non-commercial use. Do not
+redistribute or bundle them.
 
 ## 3. Mixamo character (the single fixed target rig)
 
