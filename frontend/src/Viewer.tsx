@@ -56,20 +56,23 @@ export default function Viewer() {
       scene.add(grid);
     }
 
+    const clock = new THREE.Clock();
+    let table: ReturnType<typeof buildRetargetTable> | null = null;
+    let motion: Motion | null = null;
+
     const loader = new GLTFLoader();
     Promise.all([
       new Promise<THREE.Group>((res, rej) =>
         loader.load('/character.glb', (g) => res(g.scene), undefined, rej)),
       fetch('/sample_motion.json').then((r) => r.json() as Promise<Motion>),
     ])
-      .then(([root, motion]) => {
+      .then(([root, m]) => {
         scene.add(root);
         root.updateMatrixWorld(true);
-        const table = buildRetargetTable(resolveTargetBones(root));
-        // Validation frame: apply frame 0 only (left arm raised). No animation
-        // yet; we confirm orientation and the correct side first (section 9).
-        applyFrame(table, smplAnimGlobals(motion.smpl_poses[0]));
+        table = buildRetargetTable(resolveTargetBones(root));
+        motion = m;
         frameObject(root);
+        clock.start();
         console.log(`retarget: mapped ${table.length} of 22 SMPL bones`);
       })
       .catch((e) => console.error('failed to load character or fixture', e));
@@ -77,6 +80,11 @@ export default function Viewer() {
     let raf = 0;
     function render() {
       raf = requestAnimationFrame(render);
+      if (table && motion) {
+        // Rotations only for now; root translation (bob/sway) is Phase 4.
+        const f = Math.floor(clock.getElapsedTime() * motion.fps) % motion.num_frames;
+        applyFrame(table, smplAnimGlobals(motion.smpl_poses[f]));
+      }
       controls.update();
       renderer.render(scene, camera);
     }
