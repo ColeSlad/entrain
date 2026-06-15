@@ -1,17 +1,25 @@
 """generate_motion: the single swappable entry point to the dance generator.
 
 Keeping the model behind one function lets us swap EDGE for Lodge later without
-touching callers (brief sections 3 and 12). EDGE is not wired yet (needs SMPL
-plus the checkpoint, see docs/SETUP.md), so until then this returns the
-committed fixture, letting the rest of the pipeline and the frontend develop
-against a real Motion (seams first, section 4).
+touching callers (brief sections 3 and 12).
+
+Two paths, chosen by the EDGE_DIR env var:
+- EDGE_DIR unset (local dev): return the committed fixture, so the rest of the
+  pipeline and the frontend work without a GPU (seams first, section 4).
+- EDGE_DIR set (the Modal image): run EDGE's test.py as a subprocess and convert
+  the motion pkl it saves into our Motion contract.
 
 Run: python -m pipeline.generate <song.wav>   (from the backend/ directory)
 """
 
 from __future__ import annotations
 
+import os
+import pickle
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from . import contracts
@@ -20,20 +28,59 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "sample_motion.json"
 
 
 def generate_motion(audio_path: str | Path) -> contracts.Motion:
-    """Generate SMPL dance motion for one audio file.
+    """Generate SMPL dance motion for one audio file."""
+    edge_dir = os.environ.get("EDGE_DIR")
+    if not edge_dir:
+        print(f"[generate] EDGE_DIR unset; returning fixture for {audio_path}",
+              file=sys.stderr)
+        return contracts.Motion.load(FIXTURE)
+    return _generate_with_edge(Path(audio_path), Path(edge_dir))
 
-    Stand-in until EDGE is wired: returns the committed fixture regardless of
-    input so callers can build against a real Motion. Replace the body below
-    with the EDGE call once SMPL and the checkpoint are available.
+
+def _generate_with_edge(audio_path: Path, edge_dir: Path) -> contracts.Motion:
+    """Run EDGE as a subprocess in its own repo, then read the motion it saves.
+
+    Treating EDGE as a black box (its repo, its pinned deps) keeps us decoupled
+    from its internal API. EDGE saves a pkl with axis-angle smpl_poses (N, 72)
+    and smpl_trans (N, 3); the contact channel is not saved, so foot_contact is
+    zero-filled until Phase 6.
     """
-    print(f"[generate] EDGE not wired yet; returning fixture for {audio_path}",
-          file=sys.stderr)
-    # TODO(phase0): wrap EDGE here, then normalize once through the contract.
-    #   feats = audio.extract_features(audio_path)
-    #   raw   = edge_model(feats)                       # 6D rotations
-    #   poses = contracts.rot6d_to_axis_angle(raw)      # verify convention
-    #   return contracts.Motion(fps=30, ...).validate()
-    return contracts.Motion.load(FIXTURE)
+    checkpoint = os.environ.get("EDGE_CHECKPOINT", "/assets/checkpoint.pt")
+    with tempfile.TemporaryDirectory() as tmp:
+        music_dir = Path(tmp) / "music"
+        out_dir = Path(tmp) / "motions"
+        music_dir.mkdir()
+        out_dir.mkdir()
+        # EDGE wants simple, regularized filenames (no spaces).
+        shutil.copy(audio_path, music_dir / "input.wav")
+        subprocess.run(
+            [
+                "python", "test.py",
+                "--music_dir", str(music_dir),
+                "--save_motions", "--motion_save_dir", str(out_dir),
+                "--no_render",
+                "--checkpoint", str(checkpoint),
+                "--feature_type", "jukebox",
+            ],
+            cwd=str(edge_dir),
+            check=True,
+        )
+        pkls = sorted(out_dir.glob("*.pkl"))
+        if not pkls:
+            raise RuntimeError("EDGE produced no motion pkl")
+        data = pickle.loads(pkls[0].read_bytes())
+
+    poses = data["smpl_poses"]        # (N, 72) axis-angle, already converted
+    trans = data["smpl_trans"]        # (N, 3) meters, pelvis
+    n = len(poses)
+    return contracts.Motion(
+        fps=30,                        # EDGE generates at 30 fps
+        num_frames=n,
+        smpl_poses=poses.tolist(),
+        root_translation=trans.tolist(),
+        foot_contact=[[0, 0, 0, 0] for _ in range(n)],
+        audio=None,
+    ).validate()
 
 
 def _main(argv: list[str]) -> int:
