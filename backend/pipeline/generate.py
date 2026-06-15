@@ -55,6 +55,10 @@ def _generate_with_edge(audio_path: Path, edge_dir: Path) -> contracts.Motion:
         renders_dir.mkdir()
         # EDGE wants simple, regularized filenames (no spaces).
         shutil.copy(audio_path, music_dir / "input.wav")
+        # Generate for the whole song instead of EDGE's 30s default. Longer
+        # songs cost proportionally more GPU time.
+        import librosa
+        out_length = int(librosa.get_duration(path=str(audio_path))) + 1
         subprocess.run(
             [
                 "python", "test.py",
@@ -64,6 +68,7 @@ def _generate_with_edge(audio_path: Path, edge_dir: Path) -> contracts.Motion:
                 # and saves the motion only after that, so the dir must exist.
                 "--render_dir", str(renders_dir),
                 "--no_render",
+                "--out_length", str(out_length),
                 "--checkpoint", str(checkpoint),
                 "--feature_type", "jukebox",
             ],

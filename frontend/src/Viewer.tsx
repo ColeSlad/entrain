@@ -8,7 +8,8 @@ import type { Motion } from './api';
 type Table = ReturnType<typeof buildRetargetTable>;
 
 // Pose the character to one frame. frame may be fractional (App's clock); we
-// floor and wrap it. Rotations only for now; root translation is Phase 4 work.
+// floor and wrap it. Rotations only; root translation needs foot IK to avoid
+// sliding/floating, deferred to Phase 6.
 function showFrame(table: Table, motion: Motion, frame: number) {
   const f = ((Math.floor(frame) % motion.num_frames) + motion.num_frames) % motion.num_frames;
   applyFrame(table, smplAnimGlobals(motion.smpl_poses[f]));

@@ -8,30 +8,37 @@ export default function App() {
   const [motion, setMotion] = useState<Motion | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Audio is the master clock. The dance is shorter than most songs, so it
-  // loops within the audio: frame = (audioTime mod danceDuration) * fps. No
-  // default clip; the character rests until a song is uploaded.
+  // Audio is the master clock. The dance plays once (it is only ~30s, and
+  // looping a non-cyclic clip pops hard at the seam), so the frame tracks audio
+  // time and clamps to the last frame. No default clip; rest until uploaded.
   const danceDur = motion ? motion.num_frames / motion.fps : 1;
-  const frame = motion ? (currentTime % danceDur) * motion.fps : 0;
+  const frame = motion ? Math.min(currentTime * motion.fps, motion.num_frames - 1) : 0;
 
-  // While playing, follow the audio element's time each animation frame.
+  // While playing, follow the audio element's time; stop at the dance's end.
   useEffect(() => {
-    if (!playing) return;
+    if (!playing || !motion) return;
     let raf = 0;
     const tick = () => {
       const audio = audioRef.current;
-      if (audio) setCurrentTime(audio.currentTime);
+      if (audio) {
+        if (audio.currentTime >= danceDur) {
+          audio.pause();
+          setCurrentTime(danceDur);
+          setPlaying(false);
+          return;
+        }
+        setCurrentTime(audio.currentTime);
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing]);
+  }, [playing, motion, danceDur]);
 
   // Reflect play/pause onto the audio element. If the browser blocks autoplay
   // (no recent user gesture), fall back to paused so the Play button starts it.
@@ -69,12 +76,7 @@ export default function App() {
   return (
     <>
       <Viewer motion={motion} frame={frame} />
-      <audio
-        ref={audioRef}
-        src={audioUrl ?? undefined}
-        loop
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-      />
+      <audio ref={audioRef} src={audioUrl ?? undefined} />
       <div style={bar}>
         <label style={button}>
           {busy ? 'working...' : 'Upload song'}
@@ -87,11 +89,19 @@ export default function App() {
         <Transport
           playing={playing}
           currentTime={currentTime}
-          duration={duration}
-          onTogglePlay={() => setPlaying((p) => !p)}
+          duration={danceDur}
+          onTogglePlay={() => {
+            const audio = audioRef.current;
+            if (audio && audio.currentTime >= danceDur - 0.05) {
+              audio.currentTime = 0;
+              setCurrentTime(0);
+            }
+            setPlaying((p) => !p);
+          }}
           onSeek={(s) => {
-            if (audioRef.current) audioRef.current.currentTime = s;
-            setCurrentTime(s);
+            const t = Math.min(Math.max(s, 0), danceDur);
+            if (audioRef.current) audioRef.current.currentTime = t;
+            setCurrentTime(t);
           }}
         />
       )}

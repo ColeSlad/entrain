@@ -34,7 +34,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function pollJob(
   jobId: string,
   intervalMs = 1000,
-  timeoutMs = 300_000,
+  timeoutMs = 900_000,
 ): Promise<Motion> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
