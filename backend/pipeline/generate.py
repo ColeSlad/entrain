@@ -49,8 +49,10 @@ def _generate_with_edge(audio_path: Path, edge_dir: Path) -> contracts.Motion:
     with tempfile.TemporaryDirectory() as tmp:
         music_dir = Path(tmp) / "music"
         out_dir = Path(tmp) / "motions"
+        renders_dir = Path(tmp) / "renders"
         music_dir.mkdir()
         out_dir.mkdir()
+        renders_dir.mkdir()
         # EDGE wants simple, regularized filenames (no spaces).
         shutil.copy(audio_path, music_dir / "input.wav")
         subprocess.run(
@@ -58,6 +60,9 @@ def _generate_with_edge(audio_path: Path, edge_dir: Path) -> contracts.Motion:
                 "python", "test.py",
                 "--music_dir", str(music_dir),
                 "--save_motions", "--motion_save_dir", str(out_dir),
+                # EDGE writes an audio wav into render_dir even with --no_render,
+                # and saves the motion only after that, so the dir must exist.
+                "--render_dir", str(renders_dir),
                 "--no_render",
                 "--checkpoint", str(checkpoint),
                 "--feature_type", "jukebox",
