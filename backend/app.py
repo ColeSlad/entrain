@@ -1,17 +1,19 @@
 """FastAPI app: accept an audio upload, run generation as a job, serve results.
 
-Phase 3 local version. Generation is the generate_motion stand-in (returns the
-committed fixture) until EDGE is wired; the job and polling shape already match
-what the real async pipeline needs. Modal, R2, and Neon are deferred: jobs live
-in memory and the result is the section 8 Motion JSON, which the frontend
-retargets in the browser (so no server-side GLB baking yet).
+Generation runs either locally (the generate_motion stand-in, returns the
+committed fixture) or, with ENTRAIN_MODAL_GENERATE=1, on the deployed Modal
+Generator (real EDGE). R2 and Neon are deferred: jobs live in memory and the
+result is the section 8 Motion JSON, which the frontend retargets in the
+browser (so no server-side GLB baking yet).
 
 Run from the backend/ directory:
-    uvicorn app:app --reload
+    uvicorn app:app --reload                       # local stand-in
+    ENTRAIN_MODAL_GENERATE=1 uvicorn app:app       # real EDGE on Modal
 """
 
 from __future__ import annotations
 
+import os
 import tempfile
 import uuid
 from pathlib import Path
@@ -34,12 +36,24 @@ app.add_middleware(
 # In-memory job store: id -> {status, motion (section 8 dict | None), error}.
 _jobs: dict[str, dict] = {}
 
+# Dispatch to the deployed Modal Generator (real EDGE) when set; otherwise run
+# the local stand-in. Either way the result is a section 8 Motion dict.
+USE_MODAL = os.environ.get("ENTRAIN_MODAL_GENERATE") == "1"
+
 
 def _run_job(job_id: str, audio_path: str) -> None:
     """Run generation in the background and record the result on the job."""
     try:
-        motion = generate_motion(audio_path)
-        _jobs[job_id] = {"status": "done", "motion": motion.to_dict(), "error": None}
+        if USE_MODAL:
+            import modal
+
+            generator = modal.Cls.from_name("entrain-generate", "Generator")
+            motion = generator().generate.remote(
+                Path(audio_path).read_bytes(), Path(audio_path).name
+            )
+        else:
+            motion = generate_motion(audio_path).to_dict()
+        _jobs[job_id] = {"status": "done", "motion": motion, "error": None}
     except Exception as e:  # surface the failure to the poller
         _jobs[job_id] = {"status": "error", "motion": None, "error": str(e)}
     finally:

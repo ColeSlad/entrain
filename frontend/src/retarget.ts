@@ -31,10 +31,11 @@ const SMPL_TO_MIXAMO_CORE: Record<string, string> = {
   right_hip: 'RightUpLeg', right_knee: 'RightLeg', right_ankle: 'RightFoot', right_foot: 'RightToeBase',
 };
 
-// Coordinate fix: SMPL/AMASS data is often Z-up. Our committed fixture is
-// authored Y-up like Mixamo, so this is identity. For real EDGE data, set it to
-// -90 degrees about X and validate one static frame (reference, section 9).
-export const COORD_FIX = new THREE.Quaternion();
+// Coordinate fix into Mixamo's Y-up frame (reference, section 9). Empirically,
+// real EDGE motion stands upright with +90 deg about Z (not the -90 about X the
+// reference assumed); found by live-tuning the orientation against real clips.
+const _coordFix = new THREE.Quaternion()
+  .setFromEuler(new THREE.Euler(0, 0, Math.PI / 2, 'XYZ'));
 
 // "mixamorig:Hips", "mixamorig_Hips", or "Hips" all resolve to "Hips", so the
 // map works regardless of how the FBX-to-GLB step renamed the bones.
@@ -72,7 +73,7 @@ export function smplAnimGlobals(pose: number[]): THREE.Quaternion[] {
     const p = SMPL_PARENTS[j];
     global[j] = p === -1 ? local[j].clone() : global[p].clone().multiply(local[j]);
   }
-  for (let j = 0; j < 24; j++) global[j].premultiply(COORD_FIX);
+  for (let j = 0; j < 24; j++) global[j].premultiply(_coordFix);
   return global;
 }
 
@@ -94,7 +95,7 @@ function boneDepth(b: THREE.Object3D): number {
 // so tgtRest reads the true rest world rotation. SMPL rest globals are identity
 // (all local rotations zero), so the coord-fixed source rest is just COORD_FIX.
 export function buildRetargetTable(targetByCore: Map<string, THREE.Bone>): RetargetRow[] {
-  const srcRestInv = COORD_FIX.clone().invert();
+  const srcRestInv = _coordFix.clone().invert();
   const rows: RetargetRow[] = [];
   for (let j = 0; j < 24; j++) {
     const core = SMPL_TO_MIXAMO_CORE[SMPL_NAMES[j]];

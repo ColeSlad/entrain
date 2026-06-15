@@ -1,33 +1,37 @@
 import type { CSSProperties } from 'react';
 
-// Play/pause and scrub. Stateless: App owns the playback state and frame.
+// Play/pause and scrub, in song seconds. Stateless: App owns the audio clock.
 export default function Transport({
-  playing, frame, numFrames, fps, onTogglePlay, onSeek,
+  playing, currentTime, duration, onTogglePlay, onSeek,
 }: {
   playing: boolean;
-  frame: number;
-  numFrames: number;
-  fps: number;
+  currentTime: number;
+  duration: number;
   onTogglePlay: () => void;
-  onSeek: (frame: number) => void;
+  onSeek: (seconds: number) => void;
 }) {
-  const at = (frame / fps).toFixed(1);
-  const total = (numFrames / fps).toFixed(1);
   return (
     <div style={bar}>
       <button onClick={onTogglePlay} style={btn}>{playing ? 'Pause' : 'Play'}</button>
       <input
         type="range"
         min={0}
-        max={Math.max(0, numFrames - 1)}
-        step={1}
-        value={Math.floor(frame)}
+        max={duration || 0}
+        step={0.01}
+        value={Math.min(currentTime, duration || 0)}
         onChange={(e) => onSeek(Number(e.target.value))}
         style={{ flex: 1 }}
       />
-      <span style={time}>{at}s / {total}s</span>
+      <span style={time}>{fmt(currentTime)} / {fmt(duration)}</span>
     </div>
   );
+}
+
+function fmt(s: number): string {
+  if (!isFinite(s)) return '0:00';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
 const bar: CSSProperties = {

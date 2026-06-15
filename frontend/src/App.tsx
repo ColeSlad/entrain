@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, CSSProperties } from 'react';
 import Viewer from './Viewer';
 import Transport from './Transport';
@@ -6,35 +6,41 @@ import { uploadSong, pollJob, type Motion } from './api';
 
 export default function App() {
   const [motion, setMotion] = useState<Motion | null>(null);
-  const [frame, setFrame] = useState(0);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Play the committed fixture by default, so the stage is not empty and the
-  // viewer works even before the backend is running.
-  useEffect(() => {
-    fetch('/sample_motion.json')
-      .then((r) => r.json())
-      .then((m: Motion) => setMotion((cur) => cur ?? m))
-      .catch(() => {});
-  }, []);
+  // Audio is the master clock. The dance is shorter than most songs, so it
+  // loops within the audio: frame = (audioTime mod danceDuration) * fps. No
+  // default clip; the character rests until a song is uploaded.
+  const danceDur = motion ? motion.num_frames / motion.fps : 1;
+  const frame = motion ? (currentTime % danceDur) * motion.fps : 0;
 
-  // The playback clock: advance the frame while playing. App owns this so the
-  // transport (play/pause/scrub) and the viewer share one source of truth.
+  // While playing, follow the audio element's time each animation frame.
   useEffect(() => {
-    if (!playing || !motion) return;
+    if (!playing) return;
     let raf = 0;
-    let last = performance.now();
-    const tick = (now: number) => {
-      const dt = (now - last) / 1000;
-      last = now;
-      setFrame((f) => (f + dt * motion.fps) % motion.num_frames);
+    const tick = () => {
+      const audio = audioRef.current;
+      if (audio) setCurrentTime(audio.currentTime);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, motion]);
+  }, [playing]);
+
+  // Reflect play/pause onto the audio element. If the browser blocks autoplay
+  // (no recent user gesture), fall back to paused so the Play button starts it.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !audioUrl) return;
+    if (playing) audio.play().catch(() => setPlaying(false));
+    else audio.pause();
+  }, [playing, audioUrl]);
 
   async function onFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -45,8 +51,12 @@ export default function App() {
       const jobId = await uploadSong(file);
       setStatus('generating...');
       const result = await pollJob(jobId);
+      setAudioUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
       setMotion(result);
-      setFrame(0);
+      setCurrentTime(0);
       setPlaying(true);
       setStatus(`playing ${file.name}`);
     } catch (err) {
@@ -59,6 +69,12 @@ export default function App() {
   return (
     <>
       <Viewer motion={motion} frame={frame} />
+      <audio
+        ref={audioRef}
+        src={audioUrl ?? undefined}
+        loop
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+      />
       <div style={bar}>
         <label style={button}>
           {busy ? 'working...' : 'Upload song'}
@@ -70,11 +86,13 @@ export default function App() {
       {motion && (
         <Transport
           playing={playing}
-          frame={frame}
-          numFrames={motion.num_frames}
-          fps={motion.fps}
+          currentTime={currentTime}
+          duration={duration}
           onTogglePlay={() => setPlaying((p) => !p)}
-          onSeek={(f) => { setPlaying(false); setFrame(f); }}
+          onSeek={(s) => {
+            if (audioRef.current) audioRef.current.currentTime = s;
+            setCurrentTime(s);
+          }}
         />
       )}
     </>
