@@ -3,19 +3,20 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { resolveTargetBones, buildRetargetTable, smplAnimGlobals, applyFrame } from './retarget';
+import type { Motion } from './api';
 
-// Section 8 Motion, loaded from the committed fixture during seams-first dev.
-interface Motion {
-  fps: number;
-  num_frames: number;
-  smpl_poses: number[][];
-  root_translation: number[][];
-  foot_contact: number[][];
-  audio: unknown;
-}
-
-export default function Viewer() {
+export default function Viewer({ motion }: { motion: Motion | null }) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const motionRef = useRef<Motion | null>(motion);
+  const clockRef = useRef<THREE.Clock | null>(null);
+  if (!clockRef.current) clockRef.current = new THREE.Clock();
+
+  // Keep the latest motion available to the render loop, and restart timing
+  // when it changes so a new clip plays from the top.
+  useEffect(() => {
+    motionRef.current = motion;
+    clockRef.current!.start();
+  }, [motion]);
 
   useEffect(() => {
     const mount = mountRef.current!;
@@ -56,34 +57,29 @@ export default function Viewer() {
       scene.add(grid);
     }
 
-    const clock = new THREE.Clock();
     let table: ReturnType<typeof buildRetargetTable> | null = null;
-    let motion: Motion | null = null;
-
-    const loader = new GLTFLoader();
-    Promise.all([
-      new Promise<THREE.Group>((res, rej) =>
-        loader.load('/character.glb', (g) => res(g.scene), undefined, rej)),
-      fetch('/sample_motion.json').then((r) => r.json() as Promise<Motion>),
-    ])
-      .then(([root, m]) => {
+    new GLTFLoader().load(
+      '/character.glb',
+      (g) => {
+        const root = g.scene;
         scene.add(root);
         root.updateMatrixWorld(true);
         table = buildRetargetTable(resolveTargetBones(root));
-        motion = m;
         frameObject(root);
-        clock.start();
         console.log(`retarget: mapped ${table.length} of 22 SMPL bones`);
-      })
-      .catch((e) => console.error('failed to load character or fixture', e));
+      },
+      undefined,
+      (e) => console.error('character load failed', e),
+    );
 
     let raf = 0;
     function render() {
       raf = requestAnimationFrame(render);
-      if (table && motion) {
+      const m = motionRef.current;
+      if (table && m) {
         // Rotations only for now; root translation (bob/sway) is Phase 4.
-        const f = Math.floor(clock.getElapsedTime() * motion.fps) % motion.num_frames;
-        applyFrame(table, smplAnimGlobals(motion.smpl_poses[f]));
+        const f = Math.floor(clockRef.current!.getElapsedTime() * m.fps) % m.num_frames;
+        applyFrame(table, smplAnimGlobals(m.smpl_poses[f]));
       }
       controls.update();
       renderer.render(scene, camera);
