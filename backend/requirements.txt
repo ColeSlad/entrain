@@ -1,4 +1,9 @@
 # Local dev dependencies: the Modal CLI and running backend scripts on this
-# machine. The EDGE / torch / librosa stack lives in the Modal image
-# (modal_app.py), not here. More gets added as later phases need it.
+# machine: the Modal CLI, the jobs API, and running backend scripts. The EDGE /
+# torch / librosa stack lives in the Modal image (modal_app.py), not here.
 modal==1.5.0
+
+# Jobs API (app.py).
+fastapi==0.137.0
+uvicorn[standard]==0.49.0
+python-multipart==0.0.32
