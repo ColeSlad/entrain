@@ -35,3 +35,6 @@ backend/outputs/
 
 # OS
 .DS_Store
+
+.claude/
+claude/
