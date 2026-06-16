@@ -87,22 +87,104 @@ image = (
     image=image,
     volumes={ASSETS_DIR: assets, CACHE_MOUNT: cache},
     timeout=1800,  # cold start plus the first Jukebox download can take minutes
+    scaledown_window=300,  # keep the container (and loaded models) warm 5 min
 )
 class Generator:
-    # Note: generate_motion shells out to EDGE's test.py, which reloads the
-    # model per call. Caching the model in @modal.enter is a later optimization
-    # (risk register) once the subprocess path is confirmed working.
+    @modal.enter()
+    def load(self):
+        # Load EDGE once per container so the checkpoint and (after the first
+        # request) the Jukebox model stay resident across calls. If anything
+        # here fails, generate falls back to the subprocess path, so this
+        # optimization can't break the pipeline.
+        self.model = None
+        try:
+            import sys
+            sys.path.insert(0, os.environ["EDGE_DIR"])
+            os.chdir(os.environ["EDGE_DIR"])
+            from EDGE import EDGE
+            self.model = EDGE("jukebox", os.environ["EDGE_CHECKPOINT"])
+            self.model.eval()
+            print("[generate] EDGE model cached in container", flush=True)
+        except Exception as e:
+            print(f"[generate] model preload failed ({e!r}); using subprocess", flush=True)
+
     @modal.method()
     def generate(self, audio_bytes: bytes, filename: str) -> dict:
         import tempfile
-
-        from pipeline.generate import generate_motion
 
         suffix = os.path.splitext(filename)[1] or ".wav"
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
             f.write(audio_bytes)
             path = f.name
+
+        if self.model is not None:
+            try:
+                return self._generate_cached(path)
+            except Exception as e:
+                print(f"[generate] cached path failed ({e!r}); using subprocess", flush=True)
+        from pipeline.generate import generate_motion
         return generate_motion(path).to_dict()
+
+    def _generate_cached(self, path: str) -> dict:
+        # Replicates EDGE test.py's per-request flow with the preloaded model:
+        # slice the song, extract Jukebox features, run render_sample, then map
+        # the saved pkl to our Motion contract (same as pipeline.generate).
+        import glob
+        import pickle
+        import random
+        import tempfile
+
+        import librosa
+        import numpy as np
+        import scipy.signal
+        import torch  # noqa: F401  (render_sample needs torch initialized)
+        from data.slice import slice_audio
+        from data.audio_extraction.jukebox_features import extract as juke_extract
+        from test import stringintkey
+
+        from pipeline import contracts
+
+        if not hasattr(scipy.signal, "hann"):
+            scipy.signal.hann = scipy.signal.windows.hann
+
+        y, sr = librosa.load(path, mono=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            sl = os.path.join(tmp, "slices")
+            motions = os.path.join(tmp, "motions")
+            renders = os.path.join(tmp, "renders")
+            for d in (sl, motions, renders):
+                os.makedirs(d)
+            slice_audio(path, 2.5, 5.0, sl)
+            file_list = sorted(glob.glob(f"{sl}/*.wav"), key=stringintkey)
+            # Cover ~the whole song without exceeding the available slices.
+            sample_size = max(1, min(int(len(y) / sr / 2.5) - 1, len(file_list)))
+            rand_idx = random.randint(0, len(file_list) - sample_size)
+            sel = file_list[rand_idx:rand_idx + sample_size]
+            cond = torch.from_numpy(np.array([juke_extract(f)[0] for f in sel]))
+            self.model.render_sample(
+                (None, cond, sel), "test", renders,
+                render_count=-1, fk_out=motions, render=False,
+            )
+            with open(sorted(glob.glob(f"{motions}/*.pkl"))[0], "rb") as f:
+                data = pickle.load(f)
+            tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+            beats = [round(float(t), 3) for t in librosa.frames_to_time(beat_frames, sr=sr)]
+
+        poses = data["smpl_poses"]
+        trans = data["smpl_trans"]
+        n = len(poses)
+        return contracts.Motion(
+            fps=30,
+            num_frames=n,
+            smpl_poses=poses.tolist(),
+            root_translation=trans.tolist(),
+            foot_contact=[[0, 0, 0, 0] for _ in range(n)],
+            audio=contracts.Audio(
+                bpm=round(float(np.ravel(tempo)[0]), 1),
+                beats=beats,
+                downbeats=beats[::4],
+            ),
+        ).validate().to_dict()
 
 
 @app.local_entrypoint()

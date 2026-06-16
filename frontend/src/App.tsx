@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, CSSProperties } from 'react';
-import Viewer from './Viewer';
+import Viewer, { type ViewerHandle } from './Viewer';
 import Transport from './Transport';
 import { uploadSong, pollJob, type Motion } from './api';
 
@@ -11,7 +11,10 @@ export default function App() {
   const [playing, setPlaying] = useState(true);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [characterUrl, setCharacterUrl] = useState('/character.glb');
+  const [characterFbx, setCharacterFbx] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const viewerRef = useRef<ViewerHandle>(null);
 
   // Audio is the master clock. The dance plays once (it is only ~30s, and
   // looping a non-cyclic clip pops hard at the seam), so the frame tracks audio
@@ -73,9 +76,19 @@ export default function App() {
     }
   }
 
+  function onCharacterFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCharacterFbx(file.name.toLowerCase().endsWith('.fbx'));
+    setCharacterUrl((prev) => {
+      if (prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+  }
+
   return (
     <>
-      <Viewer motion={motion} frame={frame} />
+      <Viewer ref={viewerRef} characterUrl={characterUrl} characterFbx={characterFbx} motion={motion} frame={frame} />
       <audio ref={audioRef} src={audioUrl ?? undefined} />
       <div style={bar}>
         <label style={button}>
@@ -83,6 +96,14 @@ export default function App() {
           <input type="file" accept="audio/*" onChange={onFile} disabled={busy}
             style={{ display: 'none' }} />
         </label>
+        <label style={button}>
+          Character
+          <input type="file" accept=".glb,.gltf,.fbx" onChange={onCharacterFile}
+            style={{ display: 'none' }} />
+        </label>
+        <button style={button} onClick={() => viewerRef.current?.exportGLB()} disabled={!motion}>
+          Download .glb
+        </button>
         <span style={{ color: '#cfd2d6' }}>{status}</span>
       </div>
       {motion && (
