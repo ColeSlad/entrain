@@ -9,8 +9,12 @@ type Table = ReturnType<typeof buildRetargetTable>;
 type XZ = { x: number; z: number };
 
 // 0 = centered (feet slide in place), 1 = lock the planted foot so it does not
-// slide (the body then travels over it). Tune down if the travel wanders too far.
+// slide. Tune down if the travel still wanders too far.
 const FOOT_LOCK = 1.0;
+// Recentering window (frames): a slow moving average of the lock path is
+// subtracted so the dancer foot-locks step to step but does not drift off over
+// the clip. Smaller = stays more centered; larger = allows more travel.
+const RECENTER_WIN = 61;
 
 function showFrame(table: Table, motion: Motion, frame: number) {
   const f = ((Math.floor(frame) % motion.num_frames) + motion.num_frames) % motion.num_frames;
@@ -29,6 +33,18 @@ function groundToFeet(root: THREE.Object3D, feet: THREE.Object3D[], groundY: num
 }
 
 const _vp = new THREE.Vector3();
+
+function movingAvg(p: XZ[], win: number): XZ[] {
+  const half = (win - 1) / 2, n = p.length, out: XZ[] = [];
+  for (let i = 0; i < n; i++) {
+    let sx = 0, sz = 0, c = 0;
+    for (let j = Math.max(0, i - half); j <= Math.min(n - 1, i + half); j++) {
+      sx += p[j].x; sz += p[j].z; c++;
+    }
+    out.push({ x: sx / c, z: sz / c });
+  }
+  return out;
+}
 
 // Foot-locking: per frame, keep the planted (lower) foot horizontally fixed by
 // offsetting the root, so it stops sliding. The body travels over the support
@@ -52,16 +68,11 @@ function computeRootPath(table: Table, motion: Motion, left: THREE.Object3D, rig
     offZ = anchorZ - fz;
     path.push({ x: offX, z: offZ });
   }
-  // Smooth with a moving average so foot-to-foot handoffs do not pop.
-  const win = 7, half = (win - 1) / 2, n = path.length, out: XZ[] = [];
-  for (let i = 0; i < n; i++) {
-    let sx = 0, sz = 0, c = 0;
-    for (let j = Math.max(0, i - half); j <= Math.min(n - 1, i + half); j++) {
-      sx += path[j].x; sz += path[j].z; c++;
-    }
-    out.push({ x: sx / c, z: sz / c });
-  }
-  return out;
+  // Smooth foot-to-foot handoffs, then subtract a slow moving average so the
+  // dancer locks step to step but stays near center instead of drifting off.
+  const smoothed = movingAvg(path, 7);
+  const drift = movingAvg(smoothed, RECENTER_WIN);
+  return smoothed.map((p, i) => ({ x: p.x - drift[i].x, z: p.z - drift[i].z }));
 }
 
 export default function Viewer({ motion, frame }: { motion: Motion | null; frame: number }) {
