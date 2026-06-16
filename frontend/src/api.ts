@@ -3,13 +3,20 @@
 
 const API = 'http://localhost:8000';
 
+export interface AudioInfo {
+  bpm: number | null;
+  beats: number[];      // seconds
+  downbeats: number[];  // seconds
+  sections: { label: string; start: number; end: number }[];
+}
+
 export interface Motion {
   fps: number;
   num_frames: number;
   smpl_poses: number[][];
   root_translation: number[][];
   foot_contact: number[][];
-  audio: unknown;
+  audio: AudioInfo | null;
 }
 
 interface Job {

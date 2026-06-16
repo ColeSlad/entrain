@@ -55,14 +55,13 @@ def _generate_with_edge(audio_path: Path, edge_dir: Path) -> contracts.Motion:
         renders_dir.mkdir()
         # EDGE wants simple, regularized filenames (no spaces).
         shutil.copy(audio_path, music_dir / "input.wav")
+        # Load once: drives both the generation length and the beat analysis.
+        import librosa
+        import numpy as np
+        y, sr = librosa.load(str(audio_path), mono=True)
         # Generate for the whole song instead of EDGE's 30s default. Longer
         # songs cost proportionally more GPU time.
-        import librosa
-        try:
-            duration = librosa.get_duration(path=str(audio_path))
-        except TypeError:  # older librosa (in the EDGE image) uses filename=
-            duration = librosa.get_duration(filename=str(audio_path))
-        out_length = int(duration) + 1
+        out_length = int(len(y) / sr) + 1
         subprocess.run(
             [
                 "python", "test.py",
@@ -84,6 +83,20 @@ def _generate_with_edge(audio_path: Path, edge_dir: Path) -> contracts.Motion:
             raise RuntimeError("EDGE produced no motion pkl")
         data = pickle.loads(pkls[0].read_bytes())
 
+        # Beat analysis for the scrub-bar markers (Phase 5). librosa beat
+        # tracking gives bpm + beat times; downbeats are a 4/4 heuristic.
+        # Proper downbeats and sections would need the All-In-One analyzer.
+        import scipy.signal
+        if not hasattr(scipy.signal, "hann"):  # newer scipy moved it; old librosa wants the alias
+            scipy.signal.hann = scipy.signal.windows.hann
+        tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+        beats = [round(float(t), 3) for t in librosa.frames_to_time(beat_frames, sr=sr)]
+        audio = contracts.Audio(
+            bpm=round(float(np.ravel(tempo)[0]), 1),
+            beats=beats,
+            downbeats=beats[::4],
+        )
+
     poses = data["smpl_poses"]        # (N, 72) axis-angle, already converted
     trans = data["smpl_trans"]        # (N, 3) meters, pelvis
     n = len(poses)
@@ -93,7 +106,7 @@ def _generate_with_edge(audio_path: Path, edge_dir: Path) -> contracts.Motion:
         smpl_poses=poses.tolist(),
         root_translation=trans.tolist(),
         foot_contact=[[0, 0, 0, 0] for _ in range(n)],
-        audio=None,
+        audio=audio,
     ).validate()
 
 

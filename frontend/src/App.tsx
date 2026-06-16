@@ -90,6 +90,8 @@ export default function App() {
           playing={playing}
           currentTime={currentTime}
           duration={danceDur}
+          beats={motion.audio?.beats ?? []}
+          downbeats={motion.audio?.downbeats ?? []}
           onTogglePlay={() => {
             const audio = audioRef.current;
             if (audio && audio.currentTime >= danceDur - 0.05) {
