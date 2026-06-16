@@ -59,10 +59,15 @@ def _generate_with_edge(audio_path: Path, edge_dir: Path) -> contracts.Motion:
         import librosa
         import numpy as np
         y, sr = librosa.load(str(audio_path), mono=True)
-        # Generate for the whole song instead of EDGE's 30s default. Longer
-        # songs cost proportionally more GPU time.
-        out_length = int(len(y) / sr) + 1
-        subprocess.run(
+        # Generate for ~the whole song. EDGE slices it into 5s windows at 2.5s
+        # stride and stitches a window of (out_length/2.5 - 1) consecutive
+        # slices, so out_length must not exceed what the slices provide or
+        # test.py's random window goes negative (empty randrange). Cap to the
+        # available slices. Longer songs cost proportionally more GPU time.
+        dur = len(y) / sr
+        slices = max(2, int((dur - 5.0) / 2.5) + 1)
+        out_length = int(slices * 2.5)
+        proc = subprocess.run(
             [
                 "python", "test.py",
                 "--music_dir", str(music_dir),
@@ -76,8 +81,15 @@ def _generate_with_edge(audio_path: Path, edge_dir: Path) -> contracts.Motion:
                 "--feature_type", "jukebox",
             ],
             cwd=str(edge_dir),
-            check=True,
+            stderr=subprocess.PIPE,
+            text=True,
         )
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stderr or "").splitlines()[-25:])
+            raise RuntimeError(
+                f"EDGE exited {proc.returncode} "
+                f"(-9 usually means out-of-memory):\n{tail}"
+            )
         pkls = sorted(out_dir.glob("*.pkl"))
         if not pkls:
             raise RuntimeError("EDGE produced no motion pkl")
