@@ -6,10 +6,12 @@ import { resolveTargetBones, buildRetargetTable, smplAnimGlobals, applyFrame } f
 import type { Motion } from './api';
 
 type Table = ReturnType<typeof buildRetargetTable>;
+type XZ = { x: number; z: number };
 
-// Pose the character to one frame. frame may be fractional (App's clock); we
-// floor and wrap it. Rotations only; root translation needs foot IK to avoid
-// sliding/floating, deferred to Phase 6.
+// 0 = centered (feet slide in place), 1 = lock the planted foot so it does not
+// slide (the body then travels over it). Tune down if the travel wanders too far.
+const FOOT_LOCK = 1.0;
+
 function showFrame(table: Table, motion: Motion, frame: number) {
   const f = ((Math.floor(frame) % motion.num_frames) + motion.num_frames) % motion.num_frames;
   applyFrame(table, smplAnimGlobals(motion.smpl_poses[f]));
@@ -17,9 +19,7 @@ function showFrame(table: Table, motion: Motion, frame: number) {
 
 const _foot = new THREE.Vector3();
 
-// Keep the lowest foot on the floor by offsetting the character's Y. A cheap
-// stand-in for foot-contact IK (Phase 6): removes floating/sinking but flattens
-// jumps and does not stop horizontal foot sliding.
+// Keep the lowest foot on the floor by offsetting the character's Y.
 function groundToFeet(root: THREE.Object3D, feet: THREE.Object3D[], groundY: number) {
   if (!feet.length) return;
   root.updateMatrixWorld(true);
@@ -28,9 +28,42 @@ function groundToFeet(root: THREE.Object3D, feet: THREE.Object3D[], groundY: num
   root.position.y += groundY - minY;
 }
 
-// Controlled viewer: App owns playback and passes the current frame. The WebGL
-// loop renders continuously (so orbit stays live); the pose updates whenever
-// the frame or motion changes.
+const _vp = new THREE.Vector3();
+
+// Foot-locking: per frame, keep the planted (lower) foot horizontally fixed by
+// offsetting the root, so it stops sliding. The body travels over the support
+// foot. Re-anchors continuously when support switches feet; smoothed to avoid
+// jitter at the transitions. Precomputed once per clip (poses every frame).
+function computeRootPath(table: Table, motion: Motion, left: THREE.Object3D, right: THREE.Object3D, root: THREE.Object3D): XZ[] {
+  const path: XZ[] = [];
+  root.position.set(0, 0, 0);
+  let anchorX = 0, anchorZ = 0, offX = 0, offZ = 0, prev = '';
+  for (let f = 0; f < motion.num_frames; f++) {
+    showFrame(table, motion, f);
+    root.updateMatrixWorld(true);
+    left.getWorldPosition(_vp);
+    const lx = _vp.x, lz = _vp.z, ly = _vp.y;
+    right.getWorldPosition(_vp);
+    const rx = _vp.x, rz = _vp.z, ry = _vp.y;
+    const supL = ly <= ry;
+    const fx = supL ? lx : rx, fz = supL ? lz : rz, cur = supL ? 'L' : 'R';
+    if (cur !== prev) { anchorX = fx + offX; anchorZ = fz + offZ; prev = cur; }
+    offX = anchorX - fx;
+    offZ = anchorZ - fz;
+    path.push({ x: offX, z: offZ });
+  }
+  // Smooth with a moving average so foot-to-foot handoffs do not pop.
+  const win = 7, half = (win - 1) / 2, n = path.length, out: XZ[] = [];
+  for (let i = 0; i < n; i++) {
+    let sx = 0, sz = 0, c = 0;
+    for (let j = Math.max(0, i - half); j <= Math.min(n - 1, i + half); j++) {
+      sx += path[j].x; sz += path[j].z; c++;
+    }
+    out.push({ x: sx / c, z: sz / c });
+  }
+  return out;
+}
+
 export default function Viewer({ motion, frame }: { motion: Motion | null; frame: number }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<Table | null>(null);
@@ -38,14 +71,31 @@ export default function Viewer({ motion, frame }: { motion: Motion | null; frame
   const frameRef = useRef(frame);
   const rootObjRef = useRef<THREE.Object3D | null>(null);
   const feetRef = useRef<THREE.Object3D[]>([]);
+  const lockFeetRef = useRef<[THREE.Object3D, THREE.Object3D] | null>(null);
   const groundYRef = useRef(0);
+  const rootPathRef = useRef<XZ[]>([]);
+
+  // Recompute the foot-locking path when a new clip arrives (and the character
+  // is loaded). Runs before the pose effect below so the path is ready.
+  useEffect(() => {
+    const root = rootObjRef.current;
+    if (tableRef.current && motion && root && lockFeetRef.current) {
+      const [lf, rf] = lockFeetRef.current;
+      rootPathRef.current = computeRootPath(tableRef.current, motion, lf, rf, root);
+    }
+  }, [motion]);
 
   useEffect(() => {
     motionRef.current = motion;
     frameRef.current = frame;
-    if (tableRef.current && motion) {
+    const root = rootObjRef.current;
+    if (tableRef.current && motion && root) {
       showFrame(tableRef.current, motion, frame);
-      if (rootObjRef.current) groundToFeet(rootObjRef.current, feetRef.current, groundYRef.current);
+      const i = ((Math.floor(frame) % motion.num_frames) + motion.num_frames) % motion.num_frames;
+      const off = rootPathRef.current[i] ?? { x: 0, z: 0 };
+      root.position.x = off.x * FOOT_LOCK;
+      root.position.z = off.z * FOOT_LOCK;
+      groundToFeet(root, feetRef.current, groundYRef.current);
     }
   }, [motion, frame]);
 
@@ -69,8 +119,7 @@ export default function Viewer({ motion, frame }: { motion: Motion | null; frame
 
     const controls = new OrbitControls(camera, renderer.domElement);
 
-    // Frame the camera to whatever scale the GLB uses (Mixamo exports vary
-    // between meters and centimeters).
+    // Frame the camera to whatever scale the GLB uses (meters or centimeters).
     function frameObject(obj: THREE.Object3D) {
       obj.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(obj);
@@ -83,7 +132,7 @@ export default function Viewer({ motion, frame }: { motion: Motion | null; frame
       camera.far = maxDim * 100;
       camera.updateProjectionMatrix();
       controls.update();
-      const grid = new THREE.GridHelper(maxDim * 3, 12, 0x444444, 0x2a2a2a);
+      const grid = new THREE.GridHelper(maxDim * 6, 24, 0x444444, 0x2a2a2a);
       grid.position.y = box.min.y;
       scene.add(grid);
     }
@@ -98,14 +147,17 @@ export default function Viewer({ motion, frame }: { motion: Motion | null; frame
         const table = buildRetargetTable(bones);
         tableRef.current = table;
         rootObjRef.current = root;
-        // Foot bones and the rest-pose floor level for the grounding clamp.
         const feet = ['LeftFoot', 'RightFoot', 'LeftToeBase', 'RightToeBase']
           .map((n) => bones.get(n))
           .filter((b): b is THREE.Bone => !!b);
         feetRef.current = feet;
         groundYRef.current = feet.reduce((m, b) => Math.min(m, b.getWorldPosition(_foot).y), Infinity);
+        const lf = bones.get('LeftFoot');
+        const rf = bones.get('RightFoot');
+        if (lf && rf) lockFeetRef.current = [lf, rf];
         frameObject(root);
-        if (motionRef.current) {
+        if (motionRef.current && lf && rf) {
+          rootPathRef.current = computeRootPath(table, motionRef.current, lf, rf, root);
           showFrame(table, motionRef.current, frameRef.current);
           groundToFeet(root, feet, groundYRef.current);
         }
