@@ -15,6 +15,19 @@ function showFrame(table: Table, motion: Motion, frame: number) {
   applyFrame(table, smplAnimGlobals(motion.smpl_poses[f]));
 }
 
+const _foot = new THREE.Vector3();
+
+// Keep the lowest foot on the floor by offsetting the character's Y. A cheap
+// stand-in for foot-contact IK (Phase 6): removes floating/sinking but flattens
+// jumps and does not stop horizontal foot sliding.
+function groundToFeet(root: THREE.Object3D, feet: THREE.Object3D[], groundY: number) {
+  if (!feet.length) return;
+  root.updateMatrixWorld(true);
+  let minY = Infinity;
+  for (const b of feet) minY = Math.min(minY, b.getWorldPosition(_foot).y);
+  root.position.y += groundY - minY;
+}
+
 // Controlled viewer: App owns playback and passes the current frame. The WebGL
 // loop renders continuously (so orbit stays live); the pose updates whenever
 // the frame or motion changes.
@@ -23,11 +36,17 @@ export default function Viewer({ motion, frame }: { motion: Motion | null; frame
   const tableRef = useRef<Table | null>(null);
   const motionRef = useRef<Motion | null>(motion);
   const frameRef = useRef(frame);
+  const rootObjRef = useRef<THREE.Object3D | null>(null);
+  const feetRef = useRef<THREE.Object3D[]>([]);
+  const groundYRef = useRef(0);
 
   useEffect(() => {
     motionRef.current = motion;
     frameRef.current = frame;
-    if (tableRef.current && motion) showFrame(tableRef.current, motion, frame);
+    if (tableRef.current && motion) {
+      showFrame(tableRef.current, motion, frame);
+      if (rootObjRef.current) groundToFeet(rootObjRef.current, feetRef.current, groundYRef.current);
+    }
   }, [motion, frame]);
 
   useEffect(() => {
@@ -75,10 +94,21 @@ export default function Viewer({ motion, frame }: { motion: Motion | null; frame
         const root = g.scene;
         scene.add(root);
         root.updateMatrixWorld(true);
-        const table = buildRetargetTable(resolveTargetBones(root));
+        const bones = resolveTargetBones(root);
+        const table = buildRetargetTable(bones);
         tableRef.current = table;
+        rootObjRef.current = root;
+        // Foot bones and the rest-pose floor level for the grounding clamp.
+        const feet = ['LeftFoot', 'RightFoot', 'LeftToeBase', 'RightToeBase']
+          .map((n) => bones.get(n))
+          .filter((b): b is THREE.Bone => !!b);
+        feetRef.current = feet;
+        groundYRef.current = feet.reduce((m, b) => Math.min(m, b.getWorldPosition(_foot).y), Infinity);
         frameObject(root);
-        if (motionRef.current) showFrame(table, motionRef.current, frameRef.current);
+        if (motionRef.current) {
+          showFrame(table, motionRef.current, frameRef.current);
+          groundToFeet(root, feet, groundYRef.current);
+        }
         console.log(`retarget: mapped ${table.length} of 22 SMPL bones`);
       },
       undefined,

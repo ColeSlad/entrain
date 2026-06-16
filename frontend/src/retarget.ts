@@ -37,6 +37,13 @@ const SMPL_TO_MIXAMO_CORE: Record<string, string> = {
 const _coordFix = new THREE.Quaternion()
   .setFromEuler(new THREE.Euler(0, 0, Math.PI / 2, 'XYZ'));
 
+// Pelvis upright strength. EDGE's root carries a large off-vertical rotation
+// (analysis: ~30 deg of pitch plus a ~25 deg constant recline) that reads as
+// the dancer leaning forward and back. Removing the pelvis pitch/roll while
+// keeping yaw de-leans the whole body. 0 = faithful to EDGE, 1 = pelvis always
+// vertical. Tune to taste.
+const ROOT_UPRIGHT = 1.0;
+
 // "mixamorig:Hips", "mixamorig_Hips", or "Hips" all resolve to "Hips", so the
 // map works regardless of how the FBX-to-GLB step renamed the bones.
 function coreName(boneName: string): string {
@@ -75,6 +82,17 @@ export function smplAnimGlobals(pose: number[]): THREE.Quaternion[] {
   }
   for (let j = 0; j < 24; j++) global[j].premultiply(_coordFix);
   return global;
+}
+
+const _e = new THREE.Euler();
+
+// Return an upright version of a world orientation: keep yaw (turning), scale
+// pitch (front/back lean) and roll (side tilt) toward zero by ROOT_UPRIGHT.
+function stabilizeUpright(q: THREE.Quaternion): THREE.Quaternion {
+  _e.setFromQuaternion(q, 'YXZ');
+  _e.x *= 1 - ROOT_UPRIGHT;
+  _e.z *= 1 - ROOT_UPRIGHT;
+  return new THREE.Quaternion().setFromEuler(_e);
 }
 
 export interface RetargetRow {
@@ -120,7 +138,12 @@ export function applyFrame(rows: RetargetRow[], animGlobals: THREE.Quaternion[])
     const d = animGlobals[row.smplIndex].clone()
       .multiply(row.srcRestInv)
       .multiply(row.tgtRest);
+    // Store the original world orientation so children localize against the
+    // real pose. For the pelvis (root) we localize an upright version instead,
+    // which de-leans the whole body while keeping each joint's pose relative
+    // to the hips (the lean lives in the hips' local rotation).
     desired.set(row.bone, d);
+    const apply = row.smplIndex === 0 && ROOT_UPRIGHT > 0 ? stabilizeUpright(d) : d;
 
     const parent = row.bone.parent;
     const parentWorld = new THREE.Quaternion();
@@ -129,6 +152,6 @@ export function applyFrame(rows: RetargetRow[], animGlobals: THREE.Quaternion[])
     } else if (parent) {
       parent.getWorldQuaternion(parentWorld);
     }
-    row.bone.quaternion.copy(parentWorld.invert().multiply(d));
+    row.bone.quaternion.copy(parentWorld.invert().multiply(apply));
   }
 }

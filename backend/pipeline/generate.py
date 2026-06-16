@@ -58,7 +58,11 @@ def _generate_with_edge(audio_path: Path, edge_dir: Path) -> contracts.Motion:
         # Generate for the whole song instead of EDGE's 30s default. Longer
         # songs cost proportionally more GPU time.
         import librosa
-        out_length = int(librosa.get_duration(path=str(audio_path))) + 1
+        try:
+            duration = librosa.get_duration(path=str(audio_path))
+        except TypeError:  # older librosa (in the EDGE image) uses filename=
+            duration = librosa.get_duration(filename=str(audio_path))
+        out_length = int(duration) + 1
         subprocess.run(
             [
                 "python", "test.py",
