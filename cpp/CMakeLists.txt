@@ -16,10 +16,11 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# All Phase 0+ sources. The math header is header-only; .cpp files are added as
-# the port progresses (retarget.cpp, cleanup.cpp in later phases).
+# All sources. The math header is header-only; cleanup.cpp (grounding,
+# foot-lock) is added in Phase 4.
 add_executable(entrain_core
   api.cpp
+  retarget.cpp
 )
 
 # Emit "<target>.js" rather than the default ".html". The matching .wasm is
@@ -35,7 +36,7 @@ target_link_options(entrain_core PRIVATE
   "-sENVIRONMENT=web"
   "-sALLOW_MEMORY_GROWTH=1"
   "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPF32']"
-  "-sEXPORTED_FUNCTIONS=['_add','_malloc','_free']"
+  "-sEXPORTED_FUNCTIONS=['_add','_setup','_set_params','_compute_all','_compute_frame','_get_out_local_quat','_get_out_root_pos','_get_frame_local_quat','_get_frame_root_pos','_core_free','_malloc','_free']"
 )
 
 # Release: optimize and enable WASM SIMD (the per-frame math vectorizes 4-wide).
