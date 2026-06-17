@@ -267,13 +267,17 @@ class TsMotionCore implements MotionCore {
     for (let j = 0; j < 24; j++) {
       local[j] = quatFromAxisAngle(poses[base + j * 3], poses[base + j * 3 + 1], poses[base + j * 3 + 2]);
     }
-    const cf: Quat = [this.params.coordFix[0], this.params.coordFix[1], this.params.coordFix[2], this.params.coordFix[3]];
-    const global: Quat[] = new Array(24);
+    // FK over the raw globals first, then premultiply the coordinate fix in a
+    // separate pass. Folding the fix into the loop would reuse an already-fixed
+    // parent and compound the fix down the tree.
+    const raw: Quat[] = new Array(24);
     for (let j = 0; j < 24; j++) {
       const p = SMPL_PARENTS[j];
-      const g = p === -1 ? local[j] : quatMul(global[p], local[j]);
-      global[j] = quatMul(cf, g); // premultiply the coordinate fix
+      raw[j] = p === -1 ? local[j] : quatMul(raw[p], local[j]);
     }
+    const cf: Quat = [this.params.coordFix[0], this.params.coordFix[1], this.params.coordFix[2], this.params.coordFix[3]];
+    const global: Quat[] = new Array(24);
+    for (let j = 0; j < 24; j++) global[j] = quatMul(cf, raw[j]);
     return global;
   }
 
