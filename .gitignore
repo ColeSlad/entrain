@@ -15,6 +15,13 @@ dist/
 .vite/
 *.local
 
+# WASM build artifacts. The C++ source and build script are committed; the
+# emitted module is not (brief section 4/5). build/ holds CMake's cache plus
+# the emitted entrain_core.js/.wasm; the build step copies the module into
+# frontend/src/core/generated/.
+build/
+frontend/src/core/generated/
+
 # Environment and secrets
 .env
 .env.*
