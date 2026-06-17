@@ -8,6 +8,7 @@ declare module 'entrain-core' {
     ccall(name: string, returnType: string | null, argTypes: string[], args: unknown[]): unknown;
     cwrap(name: string, returnType: string | null, argTypes: string[]): (...args: unknown[]) => unknown;
     HEAPF32: Float32Array;
+    HEAP32: Int32Array;
     _malloc(bytes: number): number;
     _free(ptr: number): void;
   }
