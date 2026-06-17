@@ -4,8 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "build:wasm": "bash ../cpp/build.sh",
+    "predev": "npm run build:wasm",
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run build:wasm && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
