@@ -10,6 +10,7 @@ variable or a known path at it. This file grows as later phases add setup.
 - A CUDA GPU for local generation, or a Modal account for remote GPU.
 - Node 18+ for the frontend (added in a later phase).
 - Blender or FBX2glTF to convert the Mixamo character to GLB.
+- Emscripten and CMake to build the WASM motion core (see section 6).
 
 ## Environment variables
 
@@ -99,6 +100,45 @@ Only for later finetuning or evaluation. Do not download it for MVP inference.
    Volume, not baked into the image. They are large and license-gated.
 4. Cache the loaded model between requests. Do not reload weights per job, to
    avoid cost and cold-start penalties.
+
+## 6. WASM motion core toolchain
+
+The performance-critical motion math (FK, retarget, cleanup) is a C++ core in
+`cpp/` compiled to WebAssembly. Building it needs Emscripten and CMake. The TS
+path is the fallback, so the app still runs without this, but `npm run build`
+and `npm run dev` invoke the WASM build.
+
+Pinned versions (this is what the core was built and tested against):
+
+- Emscripten (emcc) 6.0.0, from emsdk tag
+  `sdk-releases-772bb4648be4a897ca062d6adc65bc70223d2703-64bit`.
+- CMake 4.3.3.
+
+Install:
+
+```
+# emsdk
+git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
+cd ~/emsdk && ./emsdk install latest && ./emsdk activate latest
+
+# cmake (macOS)
+brew install cmake
+```
+
+The build script (`cpp/build.sh`) sources `~/emsdk/emsdk_env.sh` automatically
+if `emcmake` is not already on your PATH. Set `EMSDK` if emsdk lives elsewhere.
+
+Build:
+
+```
+npm --prefix frontend run build:wasm   # emits build/, copies module to
+                                        # frontend/src/core/generated/
+```
+
+`npm run dev` runs this first (via `predev`) and `npm run build` runs it as its
+first step, so the module is always present. Both the CMake cache in `build/`
+and the copied module in `frontend/src/core/generated/` are gitignored; only the
+C++ source and `cpp/build.sh` are committed.
 
 ## GPU memory
 
