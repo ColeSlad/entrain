@@ -1,0 +1,114 @@
+// Benchmark the WASM motion core against the TS oracle on the real skeleton and
+// the committed motion fixture. Two measurements (brief section 7):
+//   1. Full-clip: setup + computeAll (FK + retarget + cleanup over all frames).
+//   2. Per-frame: computeFrame, vs the 16.7ms/60fps budget, scaled by K dancers.
+// Warm up, run many iterations, report the median.
+//
+// Measured under Node's V8, the same engine Chrome uses, so the ratios track the
+// browser closely; absolute numbers vary by machine. Run: npm run bench.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { performance } from 'node:perf_hooks';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { buildSkeleton, defaultParams } from '../src/retarget.ts';
+import { createTsCore } from '../src/core/retargetCore.ts';
+import createCoreFactory from '../src/core/generated/entrain_core.js';
+
+// Minimal WASM MotionCore for the benchmark, mirroring src/core/wasm.ts (which
+// imports the module through the Vite "entrain-core" alias that raw Node cannot
+// resolve). The parity test exercises the real wrapper; this only times compute.
+async function createWasmCore(wasmBinary) {
+  const mod = await createCoreFactory({ wasmBinary });
+  const cw = (n, r, a) => mod.cwrap(n, r, Array.from({ length: a }, () => 'number'));
+  const _setup = cw('setup', null, 14), _sp = cw('set_params', null, 7);
+  const _ca = cw('compute_all', null, 0), _cf = cw('compute_frame', null, 1);
+  const _gol = cw('get_out_local_quat', 'number', 0), _gor = cw('get_out_root_pos', 'number', 0);
+  const _gfl = cw('get_frame_local_quat', 'number', 0), _gfr = cw('get_frame_root_pos', 'number', 0);
+  const _free = cw('core_free', null, 0);
+  let ptrs = [], nB = 0, nF = 0;
+  const wf = (a) => { const p = mod._malloc(Math.max(4, a.length * 4)); mod.HEAPF32.set(a, p >> 2); ptrs.push(p); return p; };
+  const wi = (a) => { const p = mod._malloc(Math.max(4, a.length * 4)); mod.HEAP32.set(a, p >> 2); ptrs.push(p); return p; };
+  const freeP = () => { for (const p of ptrs) mod._free(p); ptrs = []; };
+  return {
+    setup(s, m, pr) {
+      freeP(); nB = s.numBones; nF = m.numFrames;
+      const pa = wi(s.parentIndex), rq = wf(s.restLocalQuat), rp = wf(s.restLocalPos), s2 = wi(s.smplToTarget), fb = wi(s.footBones);
+      const pp = wf(m.smplPoses), pt = wf(m.rootTranslation), pc = wf(m.footContact);
+      _setup(nB, pa, rq, rp, s2, fb, s.footBones.length, s.lockFeet[0], s.lockFeet[1], nF, m.fps, pp, pt, pc);
+      const cf = pr.coordFix;
+      _sp(pr.rootUpright, pr.footLock, pr.recenterWin, cf[0], cf[1], cf[2], cf[3]);
+    },
+    computeAll() { _ca(); const q = _gol() >> 2, r = _gor() >> 2; return { localQuat: mod.HEAPF32.slice(q, q + nF * nB * 4), rootPos: mod.HEAPF32.slice(r, r + nF * 3) }; },
+    computeFrame(f, oq, or_) { _cf(f); const q = _gfl() >> 2, r = _gfr() >> 2; oq.set(mod.HEAPF32.subarray(q, q + nB * 4)); or_.set(mod.HEAPF32.subarray(r, r + 3)); },
+    free() { _free(); freeP(); },
+  };
+}
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const repo = path.resolve(here, '../..');
+const glb = fs.readFileSync(path.join(repo, 'assets/character.glb'));
+const motion = JSON.parse(fs.readFileSync(path.join(repo, 'backend/fixtures/sample_motion.json'), 'utf8'));
+const wasmBinary = fs.readFileSync(path.join(here, '../src/core/generated/entrain_core.wasm'));
+
+function toMotionInput(m) {
+  const N = m.num_frames;
+  const smplPoses = new Float32Array(N * 72);
+  const rootTranslation = new Float32Array(N * 3);
+  const footContact = new Float32Array(N * 4);
+  for (let f = 0; f < N; f++) {
+    for (let k = 0; k < 72; k++) smplPoses[f * 72 + k] = m.smpl_poses[f][k];
+    const t = m.root_translation[f];
+    rootTranslation[f * 3] = t[0]; rootTranslation[f * 3 + 1] = t[1]; rootTranslation[f * 3 + 2] = t[2];
+    const c = m.foot_contact?.[f];
+    if (c) for (let k = 0; k < 4; k++) footContact[f * 4 + k] = c[k];
+  }
+  return { fps: m.fps, numFrames: N, smplPoses, rootTranslation, footContact };
+}
+
+const median = (xs) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+function bench(fn, iters, warmup) {
+  for (let i = 0; i < warmup; i++) fn();
+  const t = [];
+  for (let i = 0; i < iters; i++) { const s = performance.now(); fn(); t.push(performance.now() - s); }
+  return median(t);
+}
+
+const loader = new GLTFLoader();
+const ab = glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength);
+loader.parse(ab, '', async (gltf) => {
+  const { skeleton } = buildSkeleton(gltf.scene);
+  const N = motion.num_frames;
+  const params = defaultParams();
+  const mi = toMotionInput(motion);
+
+  const ts = createTsCore();
+  const wasm = await createWasmCore(wasmBinary);
+  const outQ = new Float32Array(skeleton.numBones * 4);
+  const outR = new Float32Array(3);
+
+  // 1. Full clip: setup + computeAll.
+  const tsClip = bench(() => { ts.setup(skeleton, mi, params); ts.computeAll(); }, 60, 5);
+  const wasmClip = bench(() => { wasm.setup(skeleton, mi, params); wasm.computeAll(); }, 60, 5);
+
+  // 2. Per frame: computeFrame on a fixed frame (setup once first).
+  ts.setup(skeleton, mi, params);
+  wasm.setup(skeleton, mi, params);
+  const f = (N / 2) | 0;
+  const tsFrame = bench(() => ts.computeFrame(f, outQ, outR), 5000, 500);
+  const wasmFrame = bench(() => wasm.computeFrame(f, outQ, outR), 5000, 500);
+  wasm.free();
+
+  const fps = (ms) => Math.round(N / (ms / 1000));
+  const r = (x) => x.toFixed(3);
+  console.log(`\nfixture: ${N} frames, ${skeleton.numBones} bones, ${skeleton.numBones * N * 4} output floats\n`);
+  console.log('full clip (setup + computeAll), median:');
+  console.log(`  TS oracle : ${r(tsClip)} ms   (${fps(tsClip)} clip-fps)`);
+  console.log(`  WASM      : ${r(wasmClip)} ms   (${fps(wasmClip)} clip-fps)`);
+  console.log(`  speedup   : ${(tsClip / wasmClip).toFixed(2)}x\n`);
+  console.log('per frame (computeFrame), median:');
+  console.log(`  TS oracle : ${r(tsFrame)} ms`);
+  console.log(`  WASM      : ${r(wasmFrame)} ms`);
+  console.log(`  speedup   : ${(tsFrame / wasmFrame).toFixed(2)}x`);
+  console.log(`  16.7ms/60fps budget: WASM fits ${Math.floor(16.7 / wasmFrame)} dancers, TS fits ${Math.floor(16.7 / tsFrame)}\n`);
+}, (err) => { console.error('GLB parse failed:', err?.message || err); process.exit(1); });

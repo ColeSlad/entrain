@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "gen:parity": "node --experimental-strip-types scripts/genParity.mjs"
+    "gen:parity": "node --experimental-strip-types scripts/genParity.mjs",
+    "bench": "node --experimental-strip-types scripts/benchmark.mjs"
   },
   "dependencies": {
     "@types/three": "^0.184.1",
