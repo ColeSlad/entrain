@@ -17,13 +17,6 @@ export function loadCore(opts?: Record<string, unknown>): Promise<EntrainCore> {
   return corePromise;
 }
 
-// Phase 0 interop proof: a + b computed in WASM. Kept until the core is the
-// app's default path.
-export async function add(a: number, b: number): Promise<number> {
-  const core = await loadCore();
-  return core.ccall('add', 'number', ['number', 'number'], [a, b]) as number;
-}
-
 // A MotionCore backed by the WASM module. Resolve the returned promise once the
 // module is ready; the methods are then synchronous like the oracle's.
 export async function createWasmCore(opts?: Record<string, unknown>): Promise<MotionCore> {

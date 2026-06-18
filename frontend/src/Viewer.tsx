@@ -6,6 +6,7 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { buildSkeleton, defaultParams, type BuiltSkeleton } from './retarget';
 import { createTsCore, type CoreOutput, type MotionCore, type MotionInput, type Params } from './core/retargetCore';
+import { createWasmCore } from './core/wasm';
 import type { Motion } from './api';
 
 export interface ViewerHandle {
@@ -54,13 +55,17 @@ const Viewer = forwardRef<ViewerHandle, { motion: Motion | null; frame: number; 
     const frameRef = useRef(frame);
     const paramsRef = useRef<Params>(defaultParams());
 
-    // Retarget the current clip through the core and cache the output buffer.
-    // The render loop then just indexes into it (no per-frame core call).
+    // Retarget the current clip through the core, cache the output buffer, and
+    // show the current frame. The render loop then just indexes into the buffer
+    // (no per-frame core call). No-op until the skeleton, a clip, and the core
+    // (WASM or TS fallback) are all ready, so it is safe to call whenever any of
+    // those arrive.
     function setupAndCompute() {
       const built = builtRef.current, m = motionRef.current, core = coreRef.current;
       if (!built || !m || !core) return;
       core.setup(built.skeleton, toMotionInput(m), paramsRef.current);
       outputRef.current = core.computeAll();
+      applyOutputFrame(built, outputRef.current, frameRef.current);
     }
 
     useImperativeHandle(ref, () => ({
@@ -105,13 +110,27 @@ const Viewer = forwardRef<ViewerHandle, { motion: Motion | null; frame: number; 
       },
     }), []);
 
+    // Load the motion core once: prefer WASM, fall back to the TS oracle if the
+    // module fails to load. Whichever resolves becomes the driver; recompute in
+    // case the skeleton and clip are already waiting on it.
+    useEffect(() => {
+      let cancelled = false;
+      createWasmCore()
+        .then((c) => { if (!cancelled) { coreRef.current = c; console.log('motion core: WASM'); setupAndCompute(); } })
+        .catch((err) => {
+          if (cancelled) return;
+          console.warn('WASM core load failed; using TS oracle fallback', err);
+          coreRef.current = createTsCore();
+          setupAndCompute();
+        });
+      return () => { cancelled = true; };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     // New clip arrived: retarget it and show the current frame.
     useEffect(() => {
       motionRef.current = motion;
-      if (builtRef.current && motion) {
-        setupAndCompute();
-        if (outputRef.current) applyOutputFrame(builtRef.current, outputRef.current, frameRef.current);
-      }
+      setupAndCompute();
     }, [motion]);
 
     // Frame changed (playback / scrub): index the cached buffer.
@@ -126,8 +145,6 @@ const Viewer = forwardRef<ViewerHandle, { motion: Motion | null; frame: number; 
       const mount = mountRef.current!;
       const w = () => window.innerWidth;
       const h = () => window.innerHeight;
-
-      if (!coreRef.current) coreRef.current = createTsCore();
 
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x111418);
@@ -170,10 +187,7 @@ const Viewer = forwardRef<ViewerHandle, { motion: Motion | null; frame: number; 
         }
         builtRef.current = built;
         frameObject(root);
-        if (motionRef.current) {
-          setupAndCompute();
-          if (outputRef.current) applyOutputFrame(built, outputRef.current, frameRef.current);
-        }
+        setupAndCompute();
         console.log(`retarget: mapped ${built.mappedCount} of 22 SMPL bones`);
       }
       const onErr = (e: unknown) => console.error('character load failed', e);

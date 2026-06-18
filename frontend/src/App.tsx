@@ -3,7 +3,6 @@ import type { ChangeEvent, CSSProperties } from 'react';
 import Viewer, { type ViewerHandle } from './Viewer';
 import Transport from './Transport';
 import { uploadSong, pollJob, type Motion } from './api';
-import { add } from './core/wasm';
 
 export default function App() {
   const [motion, setMotion] = useState<Motion | null>(null);
@@ -16,12 +15,6 @@ export default function App() {
   const [characterFbx, setCharacterFbx] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const viewerRef = useRef<ViewerHandle>(null);
-
-  // Phase 0 WASM interop probe. Confirms the C++/WASM core loads and runs in the
-  // browser. Remove once the real motion core is wired in (Phase 3).
-  useEffect(() => {
-    add(2, 3).then((r) => console.log('[wasm] add(2, 3) =', r));
-  }, []);
 
   // Audio is the master clock. The dance plays once (it is only ~30s, and
   // looping a non-cyclic clip pops hard at the seam), so the frame tracks audio

@@ -4,9 +4,8 @@
 // getters return. No strings cross the boundary; pointers are passed as ints
 // (Emscripten heap offsets). compute_frame() reposes a single frame for scrub.
 //
-// Phase 2 produces target-bone LOCAL rotations; the root position is passed
-// through from the motion's pelvis translation (grounding and foot-lock are
-// Phase 4). add() is the Phase 0 interop probe, removed once JS uses the core.
+// compute_all writes target-bone LOCAL rotations plus the grounded, foot-locked
+// root position; compute_frame reposes a single frame for scrub.
 
 #include <cstdint>
 #include <emscripten/emscripten.h>
@@ -17,9 +16,6 @@ using namespace mc;
 static Core g_core;
 
 extern "C" {
-
-EMSCRIPTEN_KEEPALIVE
-int add(int a, int b) { return a + b; }
 
 EMSCRIPTEN_KEEPALIVE
 void setup(int numBones, int parentIndexPtr, int restLocalQuatPtr, int restLocalPosPtr,
