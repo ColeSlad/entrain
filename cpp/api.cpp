@@ -61,11 +61,9 @@ void compute_all() {
   Core& c = g_core;
   const int n = c.numBones;
   for (int f = 0; f < c.numFrames; f++) {
-    core_retarget_frame(c, f, &c.outLocalQuat[static_cast<size_t>(f) * n * 4]);
-    // Phase 2: pass the pelvis translation through unchanged.
-    c.outRootPos[f * 3 + 0] = c.rootTranslation[f * 3 + 0];
-    c.outRootPos[f * 3 + 1] = c.rootTranslation[f * 3 + 1];
-    c.outRootPos[f * 3 + 2] = c.rootTranslation[f * 3 + 2];
+    float* local = &c.outLocalQuat[static_cast<size_t>(f) * n * 4];
+    core_retarget_frame(c, f, local);
+    core_cleanup_frame(c, f, local, &c.outRootPos[f * 3]);
   }
 }
 
@@ -75,9 +73,7 @@ void compute_frame(int frame) {
   const int N = c.numFrames;
   int f = ((frame % N) + N) % N;
   core_retarget_frame(c, f, c.frameLocalQuat.data());
-  c.frameRootPos[0] = c.rootTranslation[f * 3 + 0];
-  c.frameRootPos[1] = c.rootTranslation[f * 3 + 1];
-  c.frameRootPos[2] = c.rootTranslation[f * 3 + 2];
+  core_cleanup_frame(c, f, c.frameLocalQuat.data(), c.frameRootPos.data());
 }
 
 EMSCRIPTEN_KEEPALIVE int get_out_local_quat() { return static_cast<int>(reinterpret_cast<intptr_t>(g_core.outLocalQuat.data())); }

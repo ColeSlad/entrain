@@ -43,6 +43,8 @@ struct Core {
   std::vector<int> mappedSmpl;     // [numBones], source SMPL joint or -1
   std::vector<int> order;          // mapped bone indices, parent before child
   std::vector<int> orderSmpl;      // SMPL joint per entry of order
+  float groundY = 0.0f;            // load-time lowest foot world Y (the floor)
+  std::vector<float> rootPath;     // [numFrames*2], foot-lock x,z, high-passed
 
   // Output buffers (heap, read back by JS as HEAPF32 views).
   std::vector<float> outLocalQuat;   // [numFrames*numBones*4]
@@ -53,10 +55,17 @@ struct Core {
 
 // Build bindWorldRot and the processing order from the skeleton (skeleton only).
 void core_setup_derived(Core& c);
-// Refresh anything derived from params (the coordinate-fix inverse).
+// Refresh anything derived from params (coordinate-fix inverse + foot-lock path).
 void core_update_params(Core& c);
 // Retarget one frame into outLocal (length numBones*4): SMPL FK, coordinate
 // fix, rest-pose correction, pelvis stabilization.
 void core_retarget_frame(const Core& c, int frame, float* outLocal);
+
+// Cleanup (cleanup.cpp): rest-pose floor height, the per-clip foot-lock path,
+// and the grounded + foot-locked root position for a frame given its retargeted
+// local rotations. These need target-skeleton world-position FK.
+void core_compute_ground(Core& c);
+void core_compute_root_path(Core& c);
+void core_cleanup_frame(const Core& c, int frame, const float* localQuat, float* outRoot3);
 
 }  // namespace mc

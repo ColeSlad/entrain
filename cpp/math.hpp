@@ -38,6 +38,22 @@ inline quat quat_mul(const quat& a, const quat& b) {
 // Inverse of a unit quaternion is its conjugate (THREE.invert for unit quats).
 inline quat quat_conj(const quat& q) { return {-q.x, -q.y, -q.z, q.w}; }
 
+struct vec3 { float x, y, z; };
+
+// Rotate a vector by a quaternion (THREE.Vector3.applyQuaternion). Used by the
+// position FK that grounding and foot-lock need.
+inline vec3 apply_quat(const quat& q, float vx, float vy, float vz) {
+  float ix = q.w * vx + q.y * vz - q.z * vy;
+  float iy = q.w * vy + q.z * vx - q.x * vz;
+  float iz = q.w * vz + q.x * vy - q.y * vx;
+  float iw = -q.x * vx - q.y * vy - q.z * vz;
+  return {
+    ix * q.w + iw * -q.x + iy * -q.z - iz * -q.y,
+    iy * q.w + iw * -q.y + iz * -q.x - ix * -q.z,
+    iz * q.w + iw * -q.z + ix * -q.y - iy * -q.x,
+  };
+}
+
 struct euler3 { float x, y, z; };  // pitch (x), yaw (y), roll (z)
 
 // YXZ euler from a quaternion, via the rotation matrix elements the YXZ case

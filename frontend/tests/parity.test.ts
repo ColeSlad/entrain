@@ -89,13 +89,11 @@ describe('motion core parity', () => {
     expect(maxPos).toBeLessThan(1e-5);
   });
 
-  it('WASM core matches the oracle rotations under 1e-4 rad', async () => {
+  it('WASM core matches the oracle (rotations and grounded root position)', async () => {
     const core = await createWasmCore({ wasmBinary });
-    const { maxAng } = errorVsGolden(run(core));
-    // Phase 2 ports rotations only; the root position is passed through, so
-    // only the per-bone angular error is gated here. Root position parity
-    // comes with the cleanup port in Phase 4.
-    expect(maxAng).toBeLessThan(1e-4);
+    const { maxAng, maxPos } = errorVsGolden(run(core));
+    expect(maxAng).toBeLessThan(1e-4); // brief's per-bone angular gate
+    expect(maxPos).toBeLessThan(1e-3); // grounded + foot-locked root (meters)
     core.free();
   });
 });

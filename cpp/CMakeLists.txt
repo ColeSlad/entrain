@@ -16,11 +16,11 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# All sources. The math header is header-only; cleanup.cpp (grounding,
-# foot-lock) is added in Phase 4.
+# All sources. The math header is header-only.
 add_executable(entrain_core
   api.cpp
   retarget.cpp
+  cleanup.cpp
 )
 
 # Emit "<target>.js" rather than the default ".html". The matching .wasm is
