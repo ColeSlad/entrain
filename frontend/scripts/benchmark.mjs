@@ -18,8 +18,9 @@ import createCoreFactory from '../src/core/generated/entrain_core.js';
 // Minimal WASM MotionCore for the benchmark, mirroring src/core/wasm.ts (which
 // imports the module through the Vite "entrain-core" alias that raw Node cannot
 // resolve). The parity test exercises the real wrapper; this only times compute.
-async function createWasmCore(wasmBinary) {
-  const mod = await createCoreFactory({ wasmBinary });
+// One module is shared across cores via handles, exactly as the app does, so the
+// multi-dancer measurement reflects real per-handle (not per-module) cost.
+function wasmCore(mod) {
   const cw = (n, r, a) => mod.cwrap(n, r, Array.from({ length: a }, () => 'number'));
   const _create = cw('core_create', 'number', 0);
   const _setup = cw('setup', null, 15), _sp = cw('set_params', null, 8);
@@ -84,8 +85,9 @@ loader.parse(ab, '', async (gltf) => {
   const params = defaultParams();
   const mi = toMotionInput(motion);
 
+  const mod = await createCoreFactory({ wasmBinary });
   const ts = createTsCore();
-  const wasm = await createWasmCore(wasmBinary);
+  const wasm = wasmCore(mod);
   const outQ = new Float32Array(skeleton.numBones * 4);
   const outR = new Float32Array(3);
 
@@ -113,4 +115,23 @@ loader.parse(ab, '', async (gltf) => {
   console.log(`  WASM      : ${r(wasmFrame)} ms`);
   console.log(`  speedup   : ${(tsFrame / wasmFrame).toFixed(2)}x`);
   console.log(`  16.7ms/60fps budget: WASM fits ${Math.floor(16.7 / wasmFrame)} dancers, TS fits ${Math.floor(16.7 / tsFrame)}\n`);
+
+  // 3. Multi-dancer field: pose K dancers for one render frame (K computeFrame
+  //    calls), WASM vs TS. This is the per-render-frame motion cost during
+  //    playback, and the metric the C++ integration changed for the app.
+  console.log('multi-dancer field (pose K dancers per render frame), median:');
+  console.log('     K |   WASM ms |     TS ms |  speedup');
+  for (const K of [1, 25, 100, 250]) {
+    const wc = [], tc = [];
+    for (let i = 0; i < K; i++) {
+      const w = wasmCore(mod); w.setup(skeleton, mi, params); wc.push(w);
+      const t = createTsCore(); t.setup(skeleton, mi, params); tc.push(t);
+    }
+    const wField = bench(() => { for (const c of wc) c.computeFrame(f, outQ, outR); }, 120, 12);
+    const tField = bench(() => { for (const c of tc) c.computeFrame(f, outQ, outR); }, 120, 12);
+    for (const c of wc) c.free();
+    console.log(`  ${String(K).padStart(4)} | ${r(wField).padStart(9)} | ${r(tField).padStart(9)} | ${(tField / wField).toFixed(2).padStart(6)}x`);
+  }
+  console.log('\n  per-frame field cost scales linearly with K; beyond a few hundred dancers');
+  console.log('  the limit is Three.js skinned rendering, not the motion core.\n');
 }, (err) => { console.error('GLB parse failed:', err?.message || err); process.exit(1); });

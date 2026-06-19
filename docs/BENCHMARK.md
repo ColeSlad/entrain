@@ -50,6 +50,21 @@ That is a ceiling for the retarget math, not a rendering claim; Three.js drawing
 and skinning dominate long before then. The point is that the motion core is no
 longer the limit.
 
+Multi-dancer field (the metric the integration changed for the app): time to
+pose K dancers for one render frame, K independent cores each calling
+computeFrame, median:
+
+| dancers | TS oracle | WASM core | speedup |
+| ------- | --------- | --------- | ------- |
+| 25      | ~0.33 ms  | ~0.03 ms  | ~11.6x  |
+| 100     | ~1.29 ms  | ~0.11 ms  | ~11.3x  |
+| 250     | ~3.22 ms  | ~0.29 ms  | ~11.2x  |
+
+Cost scales linearly with K, as expected. At 250 dancers the field math is about
+0.29 ms/frame on WASM versus 3.22 ms on TS, so WASM spends under 2% of the frame
+budget where the TS path already spends ~19%. Past a few hundred dancers the
+bottleneck is Three.js skinned rendering, not the core, on either path.
+
 ## SIMD
 
 The release build uses `-O3 -msimd128`. Measured with and without `-msimd128`,
