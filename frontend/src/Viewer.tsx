@@ -6,7 +6,7 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { buildSkeleton, type BuiltSkeleton } from './retarget';
-import { createTsCore, type CoreOutput, type MotionCore, type MotionInput, type Params } from './core/retargetCore';
+import { createTsCore, type MotionCore, type MotionInput, type Params } from './core/retargetCore';
 import { createWasmCore } from './core/wasm';
 import type { Motion } from './api';
 
@@ -38,8 +38,17 @@ interface Dancer {
   group: THREE.Group; // placed at its grid cell; the clone sits inside it
   built: BuiltSkeleton;
   core: MotionCore;
-  output: CoreOutput | null;
+  seed: [number, number, number]; // stable per-dancer randomness for variation
 }
+
+// Deterministic per-dancer randomness so a dancer's phase and tuning stay fixed
+// across re-renders (no flicker). Three independent values in [0, 1).
+function seedFor(i: number): [number, number, number] {
+  const h = (x: number) => { const s = Math.sin(x) * 43758.5453; return s - Math.floor(s); };
+  return [h(i * 12.9898 + 1), h(i * 78.233 + 1), h(i * 37.719 + 1)];
+}
+
+const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 
 // Flatten the Motion contract into the core's typed-array input.
 function toMotionInput(m: Motion): MotionInput {
@@ -58,20 +67,17 @@ function toMotionInput(m: Motion): MotionInput {
   return { fps: m.fps, numFrames: N, smplPoses, rootTranslation, footContact };
 }
 
-// Write one frame of a core's output onto its clone: every node's local
-// rotation, plus the root node's grounded + foot-locked position (relative to
-// the dancer's group, which carries the grid placement).
-function applyOutputFrame(built: BuiltSkeleton, out: CoreOutput, frame: number) {
+// Write one frame onto a clone from the core's per-frame output: every node's
+// local rotation (localQuat, length numBones*4) and the root node's grounded +
+// foot-locked position (rootPos, length 3, relative to the dancer's group which
+// carries the grid placement).
+function applyFrameArrays(built: BuiltSkeleton, localQuat: Float32Array, rootPos: Float32Array) {
   const n = built.skeleton.numBones;
-  const N = out.rootPos.length / 3;
-  const f = ((Math.floor(frame) % N) + N) % N;
-  const lq = out.localQuat;
-  const base = f * n * 4;
   for (let b = 0; b < n; b++) {
-    const o = base + b * 4;
-    built.nodes[b].quaternion.set(lq[o], lq[o + 1], lq[o + 2], lq[o + 3]);
+    const o = b * 4;
+    built.nodes[b].quaternion.set(localQuat[o], localQuat[o + 1], localQuat[o + 2], localQuat[o + 3]);
   }
-  built.nodes[0].position.set(out.rootPos[f * 3], out.rootPos[f * 3 + 1], out.rootPos[f * 3 + 2]);
+  built.nodes[0].position.set(rootPos[0], rootPos[1], rootPos[2]);
 }
 
 // Square-ish grid cells centered on the origin.
@@ -93,8 +99,9 @@ const Viewer = forwardRef<ViewerHandle, {
   characterFbx: boolean;
   count: number;
   params: Params;
+  variation: number;
 }>(
-  function Viewer({ motion, frame, characterUrl, characterFbx, count, params }, ref) {
+  function Viewer({ motion, frame, characterUrl, characterFbx, count, params, variation }, ref) {
     const mountRef = useRef<HTMLDivElement>(null);
     const sceneRef = useRef<THREE.Scene | null>(null);
     const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -107,32 +114,58 @@ const Viewer = forwardRef<ViewerHandle, {
     const frameRef = useRef(frame);
     const paramsRef = useRef<Params>(params);
     const countRef = useRef(count);
+    const variationRef = useRef(variation);
+    const recomputeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    // Shared scratch for the per-frame core output (all dancers share a skeleton
+    // so numBones is the same); reused across dancers to avoid per-frame allocs.
+    const scratchQ = useRef<Float32Array>(new Float32Array(0));
+    const scratchR = useRef<Float32Array>(new Float32Array(3));
 
-    // Phase offset spreads dancers across the clip so a crowd reads as a wave
-    // rather than lockstep. Derived from the live motion length and field size.
-    function phaseOf(index: number): number {
-      const N = motionRef.current?.num_frames ?? 0;
-      const n = dancersRef.current.length;
-      return n > 1 ? Math.round((index * N) / n) : 0;
+    // A dancer's effective params: the base sliders jittered by its stable seed,
+    // scaled by variation. variation 0 = every dancer identical (synced); higher
+    // = each dancer leans/locks differently (varied, then random).
+    function paramsFor(seed: [number, number, number]): Params {
+      const v = variationRef.current, base = paramsRef.current;
+      if (v <= 0) return base;
+      const j = (s: number) => (s - 0.5) * 2 * v; // -v..v
+      return {
+        ...base,
+        rootUpright: clamp01(base.rootUpright + j(seed[0]) * 0.6),
+        footLock: clamp01(base.footLock + j(seed[1]) * 0.5),
+      };
     }
 
+    // Phase offset: 0 when synced, spreading across the clip as variation rises,
+    // so a crowd reads as a wave/randomized rather than one cloned dancer.
+    function phaseFor(seed: [number, number, number]): number {
+      const N = motionRef.current?.num_frames ?? 0;
+      return Math.floor(seed[2] * N * variationRef.current);
+    }
+
+    // Pose every dancer at the given frame via the core's per-frame path (the
+    // ~1us call the benchmark measured), reusing one scratch buffer.
     function applyField(f: number) {
+      const q = scratchQ.current, r = scratchR.current;
       for (const d of dancersRef.current) {
-        if (d.output) applyOutputFrame(d.built, d.output, f + phaseOf(d.index));
+        d.core.computeFrame(f + phaseFor(d.seed), q, r);
+        applyFrameArrays(d.built, q, r);
       }
     }
 
-    // Retarget the current clip on every dancer's core. This is the K-times
-    // work the WASM core makes cheap; it reruns on a param change (live tuning).
+    // (Re)setup every dancer's core with its effective params. setup precomputes
+    // the foot-lock path; the per-frame poses then come from computeFrame. This
+    // is the K-times work, so it is debounced when driven by a slider drag.
     function computeField() {
       const m = motionRef.current;
       if (!m) return;
       const mi = toMotionInput(m);
-      for (const d of dancersRef.current) {
-        d.core.setup(d.built.skeleton, mi, paramsRef.current);
-        d.output = d.core.computeAll();
-      }
+      for (const d of dancersRef.current) d.core.setup(d.built.skeleton, mi, paramsFor(d.seed));
       applyField(frameRef.current);
+    }
+
+    function recompute(delayMs: number) {
+      clearTimeout(recomputeTimer.current);
+      recomputeTimer.current = setTimeout(() => computeField(), delayMs);
     }
 
     function frameGrid() {
@@ -179,7 +212,7 @@ const Viewer = forwardRef<ViewerHandle, {
         group.add(clone);
         const built = buildSkeleton(clone);
         const core = await makeCore();
-        next.push({ index: i, group, built, core, output: null });
+        next.push({ index: i, group, built, core, seed: seedFor(i) });
       }
       if (myToken !== rebuildToken.current) { // superseded mid-build; discard
         for (const d of next) d.core.free();
@@ -188,17 +221,18 @@ const Viewer = forwardRef<ViewerHandle, {
       for (const d of dancersRef.current) { d.core.free(); scene.remove(d.group); }
       dancersRef.current = next;
       for (const d of next) scene.add(d.group);
+      scratchQ.current = new Float32Array(next[0].built.skeleton.numBones * 4);
       computeField();
       frameGrid();
     }
 
     useImperativeHandle(ref, () => ({
-      // Bake the first dancer's cached output into a GLTF AnimationClip and
-      // download a .glb.
+      // Bake the first dancer into a GLTF AnimationClip and download a .glb.
+      // The field uses the per-frame path, so compute the full clip once here.
       exportGLB() {
         const d = dancersRef.current[0], m = motionRef.current;
-        if (!d || !d.output || !m) return;
-        const built = d.built, out = d.output;
+        if (!d || !m) return;
+        const built = d.built, out = d.core.computeAll();
         const N = m.num_frames, fps = m.fps, n = built.skeleton.numBones;
         const times = new Float32Array(N);
         for (let i = 0; i < N; i++) times[i] = i / fps;
@@ -234,19 +268,21 @@ const Viewer = forwardRef<ViewerHandle, {
       },
     }), []);
 
-    // New clip: recompute every dancer and show the frame.
+    // New clip: re-setup every dancer promptly.
     useEffect(() => {
       motionRef.current = motion;
-      computeField();
+      recompute(0);
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [motion]);
 
-    // Live tuning: changed params rerun the retarget on every dancer.
+    // Live tuning: params or variation re-setup every dancer (K-times work, the
+    // visible proof). Debounced so dragging stays responsive at high counts.
     useEffect(() => {
       paramsRef.current = params;
-      computeField();
+      variationRef.current = variation;
+      recompute(80);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [params]);
+    }, [params, variation]);
 
     // Dancer count changed: rebuild the field.
     useEffect(() => {
@@ -255,7 +291,7 @@ const Viewer = forwardRef<ViewerHandle, {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [count]);
 
-    // Frame changed (playback / scrub): index each dancer's cached buffer.
+    // Frame changed (playback / scrub): pose each dancer via compute_frame.
     useEffect(() => {
       frameRef.current = frame;
       applyField(frame);

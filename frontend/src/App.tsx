@@ -16,6 +16,7 @@ export default function App() {
   const [characterUrl, setCharacterUrl] = useState('/character.glb');
   const [characterFbx, setCharacterFbx] = useState(false);
   const [count, setCount] = useState(1);
+  const [variation, setVariation] = useState(0);
   const [params, setParams] = useState<Params>(() => defaultParams());
   const audioRef = useRef<HTMLAudioElement>(null);
   const viewerRef = useRef<ViewerHandle>(null);
@@ -98,7 +99,7 @@ export default function App() {
   return (
     <>
       <Viewer ref={viewerRef} characterUrl={characterUrl} characterFbx={characterFbx}
-        motion={motion} frame={frame} count={count} params={params} />
+        motion={motion} frame={frame} count={count} params={params} variation={variation} />
       <audio ref={audioRef} src={audioUrl ?? undefined} />
       <div style={bar}>
         <label style={button}>
@@ -118,8 +119,10 @@ export default function App() {
       </div>
       <div style={panel}>
         <div style={panelTitle}>motion core (WASM)</div>
-        <Slider label="Dancers" value={count} min={1} max={49} step={1}
+        <Slider label="Dancers" value={count} min={1} max={400} step={1}
           onChange={setCount} />
+        <Slider label="Variation" value={variation} min={0} max={1} step={0.05}
+          onChange={setVariation} fmt={(v) => v.toFixed(2)} />
         <Slider label="Upright" value={params.rootUpright} min={0} max={1} step={0.05}
           onChange={(v) => setParam('rootUpright', v)} fmt={(v) => v.toFixed(2)} />
         <Slider label="Foot lock" value={params.footLock} min={0} max={1} step={0.05}

@@ -54,8 +54,9 @@ void setup(int h, int numBones, int parentIndexPtr, int restLocalQuatPtr, int re
   c.rootTranslation = reinterpret_cast<const float*>(static_cast<intptr_t>(rootTranslationPtr));
   c.footContact = reinterpret_cast<const float*>(static_cast<intptr_t>(footContactPtr));
 
-  c.outLocalQuat.assign(static_cast<size_t>(numFrames) * numBones * 4, 0.0f);
-  c.outRootPos.assign(static_cast<size_t>(numFrames) * 3, 0.0f);
+  // Only the per-frame buffers are allocated here. The full-clip buffer is sized
+  // lazily in compute_all, so a field of many dancers driven by compute_frame
+  // pays no per-clip memory (just the foot-lock path, sized in setup_derived).
   c.frameLocalQuat.assign(static_cast<size_t>(numBones) * 4, 0.0f);
   c.frameRootPos.assign(3, 0.0f);
 
@@ -74,6 +75,11 @@ EMSCRIPTEN_KEEPALIVE
 void compute_all(int h) {
   Core& c = core(h);
   const int n = c.numBones;
+  const size_t nq = static_cast<size_t>(c.numFrames) * n * 4;
+  if (c.outLocalQuat.size() != nq) {
+    c.outLocalQuat.assign(nq, 0.0f);
+    c.outRootPos.assign(static_cast<size_t>(c.numFrames) * 3, 0.0f);
+  }
   for (int f = 0; f < c.numFrames; f++) {
     float* local = &c.outLocalQuat[static_cast<size_t>(f) * n * 4];
     core_retarget_frame(c, f, local);
