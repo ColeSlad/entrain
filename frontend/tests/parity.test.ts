@@ -96,4 +96,28 @@ describe('motion core parity', () => {
     expect(maxPos).toBeLessThan(1e-3); // grounded + foot-locked root (meters)
     core.free();
   });
+
+  it('two WASM handles are independent (multi-dancer)', async () => {
+    const motion = toMotionInput(motionJson);
+    const a = await createWasmCore({ wasmBinary });
+    const b = await createWasmCore({ wasmBinary });
+    // Same clip, different params: a is the default (de-leaned), b keeps EDGE's
+    // lean (rootUpright 0). If the handles shared state, b's setup would corrupt
+    // a's output.
+    a.setup(skeleton, motion, defaultParams());
+    b.setup(skeleton, motion, { ...defaultParams(), rootUpright: 0 });
+    const outA = a.computeAll();
+    const outB = b.computeAll();
+
+    // a still matches the golden, untouched by b.
+    expect(errorVsGolden(outA).maxAng).toBeLessThan(1e-4);
+    // a and b genuinely differ (different params -> different rotations).
+    let diff = 0;
+    for (let i = 0; i < outA.localQuat.length; i++) {
+      diff = Math.max(diff, Math.abs(outA.localQuat[i] - outB.localQuat[i]));
+    }
+    expect(diff).toBeGreaterThan(1e-3);
+    a.free();
+    b.free();
+  });
 });

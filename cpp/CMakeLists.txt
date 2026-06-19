@@ -36,7 +36,7 @@ target_link_options(entrain_core PRIVATE
   "-sENVIRONMENT=web"
   "-sALLOW_MEMORY_GROWTH=1"
   "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPF32','HEAP32']"
-  "-sEXPORTED_FUNCTIONS=['_setup','_set_params','_compute_all','_compute_frame','_get_out_local_quat','_get_out_root_pos','_get_frame_local_quat','_get_frame_root_pos','_core_free','_malloc','_free']"
+  "-sEXPORTED_FUNCTIONS=['_core_create','_setup','_set_params','_compute_all','_compute_frame','_get_out_local_quat','_get_out_root_pos','_get_frame_local_quat','_get_frame_root_pos','_core_free','_malloc','_free']"
 )
 
 # Release: optimize and enable WASM SIMD (the per-frame math vectorizes 4-wide).

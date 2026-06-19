@@ -21,11 +21,13 @@ import createCoreFactory from '../src/core/generated/entrain_core.js';
 async function createWasmCore(wasmBinary) {
   const mod = await createCoreFactory({ wasmBinary });
   const cw = (n, r, a) => mod.cwrap(n, r, Array.from({ length: a }, () => 'number'));
-  const _setup = cw('setup', null, 14), _sp = cw('set_params', null, 7);
-  const _ca = cw('compute_all', null, 0), _cf = cw('compute_frame', null, 1);
-  const _gol = cw('get_out_local_quat', 'number', 0), _gor = cw('get_out_root_pos', 'number', 0);
-  const _gfl = cw('get_frame_local_quat', 'number', 0), _gfr = cw('get_frame_root_pos', 'number', 0);
-  const _free = cw('core_free', null, 0);
+  const _create = cw('core_create', 'number', 0);
+  const _setup = cw('setup', null, 15), _sp = cw('set_params', null, 8);
+  const _ca = cw('compute_all', null, 1), _cf = cw('compute_frame', null, 2);
+  const _gol = cw('get_out_local_quat', 'number', 1), _gor = cw('get_out_root_pos', 'number', 1);
+  const _gfl = cw('get_frame_local_quat', 'number', 1), _gfr = cw('get_frame_root_pos', 'number', 1);
+  const _free = cw('core_free', null, 1);
+  const h = _create();
   let ptrs = [], nB = 0, nF = 0;
   const wf = (a) => { const p = mod._malloc(Math.max(4, a.length * 4)); mod.HEAPF32.set(a, p >> 2); ptrs.push(p); return p; };
   const wi = (a) => { const p = mod._malloc(Math.max(4, a.length * 4)); mod.HEAP32.set(a, p >> 2); ptrs.push(p); return p; };
@@ -35,13 +37,13 @@ async function createWasmCore(wasmBinary) {
       freeP(); nB = s.numBones; nF = m.numFrames;
       const pa = wi(s.parentIndex), rq = wf(s.restLocalQuat), rp = wf(s.restLocalPos), s2 = wi(s.smplToTarget), fb = wi(s.footBones);
       const pp = wf(m.smplPoses), pt = wf(m.rootTranslation), pc = wf(m.footContact);
-      _setup(nB, pa, rq, rp, s2, fb, s.footBones.length, s.lockFeet[0], s.lockFeet[1], nF, m.fps, pp, pt, pc);
+      _setup(h, nB, pa, rq, rp, s2, fb, s.footBones.length, s.lockFeet[0], s.lockFeet[1], nF, m.fps, pp, pt, pc);
       const cf = pr.coordFix;
-      _sp(pr.rootUpright, pr.footLock, pr.recenterWin, cf[0], cf[1], cf[2], cf[3]);
+      _sp(h, pr.rootUpright, pr.footLock, pr.recenterWin, cf[0], cf[1], cf[2], cf[3]);
     },
-    computeAll() { _ca(); const q = _gol() >> 2, r = _gor() >> 2; return { localQuat: mod.HEAPF32.slice(q, q + nF * nB * 4), rootPos: mod.HEAPF32.slice(r, r + nF * 3) }; },
-    computeFrame(f, oq, or_) { _cf(f); const q = _gfl() >> 2, r = _gfr() >> 2; oq.set(mod.HEAPF32.subarray(q, q + nB * 4)); or_.set(mod.HEAPF32.subarray(r, r + 3)); },
-    free() { _free(); freeP(); },
+    computeAll() { _ca(h); const q = _gol(h) >> 2, r = _gor(h) >> 2; return { localQuat: mod.HEAPF32.slice(q, q + nF * nB * 4), rootPos: mod.HEAPF32.slice(r, r + nF * 3) }; },
+    computeFrame(f, oq, or_) { _cf(h, f); const q = _gfl(h) >> 2, r = _gfr(h) >> 2; oq.set(mod.HEAPF32.subarray(q, q + nB * 4)); or_.set(mod.HEAPF32.subarray(r, r + 3)); },
+    free() { _free(h); freeP(); },
   };
 }
 

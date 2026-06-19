@@ -23,16 +23,20 @@ export async function createWasmCore(opts?: Record<string, unknown>): Promise<Mo
   const mod = await loadCore(opts);
   const cwrap = (name: string, ret: string | null, args: number) =>
     mod.cwrap(name, ret, Array.from({ length: args }, () => 'number'));
-  const _setup = cwrap('setup', null, 14);
-  const _setParams = cwrap('set_params', null, 7);
-  const _computeAll = cwrap('compute_all', null, 0);
-  const _computeFrame = cwrap('compute_frame', null, 1);
-  const _getOutLocal = cwrap('get_out_local_quat', 'number', 0);
-  const _getOutRoot = cwrap('get_out_root_pos', 'number', 0);
-  const _getFrameLocal = cwrap('get_frame_local_quat', 'number', 0);
-  const _getFrameRoot = cwrap('get_frame_root_pos', 'number', 0);
-  const _coreFree = cwrap('core_free', null, 0);
+  // The module holds many cores; this wrapper owns one handle. Every call
+  // takes the handle first, so independent instances never collide.
+  const _coreCreate = cwrap('core_create', 'number', 0);
+  const _setup = cwrap('setup', null, 15);
+  const _setParams = cwrap('set_params', null, 8);
+  const _computeAll = cwrap('compute_all', null, 1);
+  const _computeFrame = cwrap('compute_frame', null, 2);
+  const _getOutLocal = cwrap('get_out_local_quat', 'number', 1);
+  const _getOutRoot = cwrap('get_out_root_pos', 'number', 1);
+  const _getFrameLocal = cwrap('get_frame_local_quat', 'number', 1);
+  const _getFrameRoot = cwrap('get_frame_root_pos', 'number', 1);
+  const _coreFree = cwrap('core_free', null, 1);
 
+  const h = _coreCreate() as number;
   let inputPtrs: number[] = [];
   let numBones = 0;
   let numFrames = 0;
@@ -70,7 +74,7 @@ export async function createWasmCore(opts?: Record<string, unknown>): Promise<Mo
       const pTrans = writeF32(motion.rootTranslation);
       const pContact = writeF32(motion.footContact);
       _setup(
-        numBones, pParent, pRestQ, pRestP, pS2T, pFoot, skeleton.footBones.length,
+        h, numBones, pParent, pRestQ, pRestP, pS2T, pFoot, skeleton.footBones.length,
         skeleton.lockFeet[0], skeleton.lockFeet[1],
         numFrames, motion.fps, pPoses, pTrans, pContact,
       );
@@ -78,12 +82,12 @@ export async function createWasmCore(opts?: Record<string, unknown>): Promise<Mo
     },
     setParams(params: Params): void {
       const cf = params.coordFix;
-      _setParams(params.rootUpright, params.footLock, params.recenterWin, cf[0], cf[1], cf[2], cf[3]);
+      _setParams(h, params.rootUpright, params.footLock, params.recenterWin, cf[0], cf[1], cf[2], cf[3]);
     },
     computeAll(): CoreOutput {
-      _computeAll();
-      const q = (_getOutLocal() as number) >> 2;
-      const r = (_getOutRoot() as number) >> 2;
+      _computeAll(h);
+      const q = (_getOutLocal(h) as number) >> 2;
+      const r = (_getOutRoot(h) as number) >> 2;
       // slice() copies out of the heap so the result survives later growth.
       return {
         localQuat: mod.HEAPF32.slice(q, q + numFrames * numBones * 4),
@@ -91,14 +95,14 @@ export async function createWasmCore(opts?: Record<string, unknown>): Promise<Mo
       };
     },
     computeFrame(frame: number, outLocalQuat: Float32Array, outRootPos: Float32Array): void {
-      _computeFrame(frame);
-      const q = (_getFrameLocal() as number) >> 2;
-      const r = (_getFrameRoot() as number) >> 2;
+      _computeFrame(h, frame);
+      const q = (_getFrameLocal(h) as number) >> 2;
+      const r = (_getFrameRoot(h) as number) >> 2;
       outLocalQuat.set(mod.HEAPF32.subarray(q, q + numBones * 4));
       outRootPos.set(mod.HEAPF32.subarray(r, r + 3));
     },
     free(): void {
-      _coreFree();
+      _coreFree(h);
       freeInputs();
     },
   };
