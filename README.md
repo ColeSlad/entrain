@@ -6,6 +6,9 @@ The performance-critical motion math runs in a hand-written C++ core compiled to
 WebAssembly, with a pure-TypeScript implementation as the parity reference and
 fallback.
 
+<img width="1728" height="887" alt="image" src="https://github.com/user-attachments/assets/85c52f71-b2db-4024-92d6-62dcf9b72903" />
+
+
 ## What it does
 
 - Upload an audio file.
