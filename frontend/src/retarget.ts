@@ -1,11 +1,14 @@
 import * as THREE from 'three';
+import type { Skeleton, Params } from './core/retargetCore';
 
-// SMPL to Mixamo retarget, browser path. Implements the rest-pose correction
-// from reference/smpl_to_mixamo_retarget.js (brief section 9). The caller
-// supplies per-frame SMPL LOCAL axis-angle (the fixture); we forward-kinematic
-// it to globals, then transfer to the loaded Mixamo skeleton.
+// JS-side bone-name resolution and skeleton flattening for the motion core. The
+// numeric work (FK, rest-pose correction, coordinate fix, stabilization,
+// grounding, foot-lock) moved to core/retargetCore.ts. This file keeps what the
+// brief says stays in JS: it knows the loaded rig's bone NAMES and turns them
+// into the integer indices and flat arrays the core consumes (brief section 2).
 
-// SMPL 24-joint tree: names and parent index (-1 = root). Parent-before-child.
+// SMPL 24-joint names, in tree order. Used only to map each SMPL joint to its
+// Mixamo bone; the kinematic tree itself lives in the core.
 const SMPL_NAMES = [
   'pelvis', 'left_hip', 'right_hip', 'spine1', 'left_knee', 'right_knee',
   'spine2', 'left_ankle', 'right_ankle', 'spine3', 'left_foot', 'right_foot',
@@ -13,13 +16,12 @@ const SMPL_NAMES = [
   'right_shoulder', 'left_elbow', 'right_elbow', 'left_wrist', 'right_wrist',
   'left_hand', 'right_hand',
 ];
-const SMPL_PARENTS = [-1, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19, 20, 21];
 
 // SMPL name -> Mixamo bone "core" name (prefix stripped). Watch the two naming
 // offsets that cause most failures (reference, section 9): SMPL collar is the
 // clavicle -> Mixamo Shoulder; SMPL shoulder is the upper arm -> Mixamo Arm;
-// SMPL ankle -> Foot; SMPL foot is the toe -> ToeBase. left_hand/right_hand
-// are intentionally unmapped for body-only SMPL.
+// SMPL ankle -> Foot; SMPL foot is the toe -> ToeBase. left_hand/right_hand are
+// intentionally unmapped for body-only SMPL.
 const SMPL_TO_MIXAMO_CORE: Record<string, string> = {
   pelvis: 'Hips', spine1: 'Spine', spine2: 'Spine1', spine3: 'Spine2',
   neck: 'Neck', head: 'Head',
@@ -31,127 +33,86 @@ const SMPL_TO_MIXAMO_CORE: Record<string, string> = {
   right_hip: 'RightUpLeg', right_knee: 'RightLeg', right_ankle: 'RightFoot', right_foot: 'RightToeBase',
 };
 
-// Coordinate fix into Mixamo's Y-up frame (reference, section 9). Empirically,
-// real EDGE motion stands upright with +90 deg about Z (not the -90 about X the
-// reference assumed); found by live-tuning the orientation against real clips.
-const _coordFix = new THREE.Quaternion()
-  .setFromEuler(new THREE.Euler(0, 0, Math.PI / 2, 'XYZ'));
-
-// Pelvis upright strength. EDGE's root carries a large off-vertical rotation
-// (analysis: ~30 deg of pitch plus a ~25 deg constant recline) that reads as
-// the dancer leaning forward and back. Removing the pelvis pitch/roll while
-// keeping yaw de-leans the whole body. 0 = faithful to EDGE, 1 = pelvis always
-// vertical. Tune to taste.
-const ROOT_UPRIGHT = 1.0;
-
 // "mixamorig:Hips", "mixamorig_Hips", or "Hips" all resolve to "Hips", so the
 // map works regardless of how the FBX-to-GLB step renamed the bones.
 function coreName(boneName: string): string {
   return boneName.replace(/^mixamorig[:_]?/i, '');
 }
 
-export function resolveTargetBones(root: THREE.Object3D): Map<string, THREE.Bone> {
-  const byCore = new Map<string, THREE.Bone>();
-  root.traverse((o) => {
-    if ((o as THREE.Bone).isBone) byCore.set(coreName(o.name), o as THREE.Bone);
-  });
-  return byCore;
+export interface BuiltSkeleton {
+  skeleton: Skeleton; // flat arrays the core consumes
+  nodes: THREE.Object3D[]; // index -> scene node, for applying the core's output
+  mappedCount: number; // how many of the 22 mappable SMPL bones were found
 }
 
-const _axis = new THREE.Vector3();
+// Flatten the loaded rig into the core's Skeleton. Call while the character is
+// in its bind pose so the rest rotations and positions are the true rest. The
+// rig is unit-scale (verified against assets/character.glb), so reading each
+// node's local quaternion and position reproduces Three.js world transforms
+// under the core's scale-free FK. A scaled rig would need scale baked in here.
+export function buildSkeleton(root: THREE.Object3D): BuiltSkeleton {
+  root.updateMatrixWorld(true);
 
-function axisAngleToQuat(x: number, y: number, z: number, out: THREE.Quaternion): THREE.Quaternion {
-  const a = Math.hypot(x, y, z);
-  if (a < 1e-8) out.set(0, 0, 0, 1);
-  else out.setFromAxisAngle(_axis.set(x / a, y / a, z / a), a);
-  return out;
-}
+  // Pre-order traversal: a parent is always visited before its children, so
+  // parentIndex[i] < i and the core can do FK in a single forward pass.
+  const nodes: THREE.Object3D[] = [];
+  const indexOf = new Map<THREE.Object3D, number>();
+  root.traverse((o) => { indexOf.set(o, nodes.length); nodes.push(o); });
 
-// One frame of SMPL LOCAL axis-angle (length 72) -> per-joint GLOBAL rotations,
-// with COORD_FIX premultiplied so the motion is conjugated into the target
-// frame (reference, section 4).
-export function smplAnimGlobals(pose: number[]): THREE.Quaternion[] {
-  const local: THREE.Quaternion[] = [];
-  for (let j = 0; j < 24; j++) {
-    local[j] = axisAngleToQuat(pose[j * 3], pose[j * 3 + 1], pose[j * 3 + 2], new THREE.Quaternion());
+  const n = nodes.length;
+  const parentIndex = new Int32Array(n);
+  const restLocalQuat = new Float32Array(n * 4);
+  const restLocalPos = new Float32Array(n * 3);
+  const byCore = new Map<string, number>();
+  for (let i = 0; i < n; i++) {
+    const o = nodes[i];
+    parentIndex[i] = o.parent && indexOf.has(o.parent) ? indexOf.get(o.parent)! : -1;
+    const q = o.quaternion, p = o.position;
+    restLocalQuat[i * 4] = q.x; restLocalQuat[i * 4 + 1] = q.y;
+    restLocalQuat[i * 4 + 2] = q.z; restLocalQuat[i * 4 + 3] = q.w;
+    restLocalPos[i * 3] = p.x; restLocalPos[i * 3 + 1] = p.y; restLocalPos[i * 3 + 2] = p.z;
+    if ((o as THREE.Bone).isBone) byCore.set(coreName(o.name), i);
   }
-  const global: THREE.Quaternion[] = [];
-  for (let j = 0; j < 24; j++) {
-    const p = SMPL_PARENTS[j];
-    global[j] = p === -1 ? local[j].clone() : global[p].clone().multiply(local[j]);
-  }
-  for (let j = 0; j < 24; j++) global[j].premultiply(_coordFix);
-  return global;
-}
 
-const _e = new THREE.Euler();
-
-// Return an upright version of a world orientation: keep yaw (turning), scale
-// pitch (front/back lean) and roll (side tilt) toward zero by ROOT_UPRIGHT.
-function stabilizeUpright(q: THREE.Quaternion): THREE.Quaternion {
-  _e.setFromQuaternion(q, 'YXZ');
-  _e.x *= 1 - ROOT_UPRIGHT;
-  _e.z *= 1 - ROOT_UPRIGHT;
-  return new THREE.Quaternion().setFromEuler(_e);
-}
-
-export interface RetargetRow {
-  smplIndex: number;
-  bone: THREE.Bone;
-  srcRestInv: THREE.Quaternion; // inverse of the coord-fixed SMPL rest global
-  tgtRest: THREE.Quaternion; // target bone world rotation in bind pose
-}
-
-function boneDepth(b: THREE.Object3D): number {
-  let d = 0;
-  let n: THREE.Object3D | null = b;
-  while (n.parent) { d++; n = n.parent; }
-  return d;
-}
-
-// Precompute per-bone constants. Call while the character is in its bind pose,
-// so tgtRest reads the true rest world rotation. SMPL rest globals are identity
-// (all local rotations zero), so the coord-fixed source rest is just COORD_FIX.
-export function buildRetargetTable(targetByCore: Map<string, THREE.Bone>): RetargetRow[] {
-  const srcRestInv = _coordFix.clone().invert();
-  const rows: RetargetRow[] = [];
+  const smplToTarget = new Int32Array(24).fill(-1);
+  let mappedCount = 0;
   for (let j = 0; j < 24; j++) {
     const core = SMPL_TO_MIXAMO_CORE[SMPL_NAMES[j]];
     if (!core) continue;
-    const bone = targetByCore.get(core);
-    if (!bone) continue;
-    const tgtRest = new THREE.Quaternion();
-    bone.getWorldQuaternion(tgtRest);
-    rows.push({ smplIndex: j, bone, srcRestInv: srcRestInv.clone(), tgtRest });
+    const idx = byCore.get(core);
+    if (idx === undefined) continue;
+    smplToTarget[j] = idx;
+    mappedCount++;
   }
-  // Parent-before-child so a parent's desired world is ready when we localize
-  // its child.
-  rows.sort((a, b) => boneDepth(a.bone) - boneDepth(b.bone));
-  return rows;
+
+  const idxOrNeg = (c: string) => (byCore.has(c) ? byCore.get(c)! : -1);
+  const footBones = Int32Array.from(
+    ['LeftFoot', 'RightFoot', 'LeftToeBase', 'RightToeBase'].map(idxOrNeg).filter((i) => i >= 0),
+  );
+  const lockFeet = Int32Array.from([idxOrNeg('LeftFoot'), idxOrNeg('RightFoot')]);
+
+  return {
+    skeleton: { numBones: n, parentIndex, restLocalQuat, restLocalPos, smplToTarget, footBones, lockFeet },
+    nodes,
+    mappedCount,
+  };
 }
 
-// Apply one frame in place. desired world = srcAnim * srcRestInv * tgtRest;
-// local = parentDesiredWorld^-1 * desired (reference applyFrame).
-export function applyFrame(rows: RetargetRow[], animGlobals: THREE.Quaternion[]): void {
-  const desired = new Map<THREE.Bone, THREE.Quaternion>();
-  for (const row of rows) {
-    const d = animGlobals[row.smplIndex].clone()
-      .multiply(row.srcRestInv)
-      .multiply(row.tgtRest);
-    // Store the original world orientation so children localize against the
-    // real pose. For the pelvis (root) we localize an upright version instead,
-    // which de-leans the whole body while keeping each joint's pose relative
-    // to the hips (the lean lives in the hips' local rotation).
-    desired.set(row.bone, d);
-    const apply = row.smplIndex === 0 && ROOT_UPRIGHT > 0 ? stabilizeUpright(d) : d;
-
-    const parent = row.bone.parent;
-    const parentWorld = new THREE.Quaternion();
-    if (parent && desired.has(parent as THREE.Bone)) {
-      parentWorld.copy(desired.get(parent as THREE.Bone)!);
-    } else if (parent) {
-      parent.getWorldQuaternion(parentWorld);
-    }
-    row.bone.quaternion.copy(parentWorld.invert().multiply(apply));
-  }
+// The empirically-tuned constants, handed to the core as params so they stay
+// tunable from JS rather than baked into the math (brief section 3). Found by
+// hand against real EDGE clips; do not re-derive:
+//  - coordFix: +90 deg about Z brings the body upright in Y-up (not the
+//    reference's -90 about X; real EDGE motion is not plain Z-up).
+//  - rootUpright (ROOT_UPRIGHT): 1 holds the pelvis vertical, removing EDGE's
+//    ~30 deg pitch + ~25 deg recline; 0 is faithful to EDGE.
+//  - footLock (FOOT_LOCK): 1 locks the planted foot so it does not slide.
+//  - recenterWin (RECENTER_WIN): high-pass window so the dancer does not drift.
+export function defaultParams(): Params {
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2, 'XYZ'));
+  return {
+    rootUpright: 1.0,
+    footLock: 1.0,
+    recenterWin: 61,
+    coordFix: new Float32Array([q.x, q.y, q.z, q.w]),
+  };
 }

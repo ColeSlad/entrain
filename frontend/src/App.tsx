@@ -3,6 +3,8 @@ import type { ChangeEvent, CSSProperties } from 'react';
 import Viewer, { type ViewerHandle } from './Viewer';
 import Transport from './Transport';
 import { uploadSong, pollJob, type Motion } from './api';
+import { defaultParams } from './retarget';
+import type { Params } from './core/retargetCore';
 
 export default function App() {
   const [motion, setMotion] = useState<Motion | null>(null);
@@ -13,8 +15,16 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [characterUrl, setCharacterUrl] = useState('/character.glb');
   const [characterFbx, setCharacterFbx] = useState(false);
+  const [count, setCount] = useState(1);
+  const [variation, setVariation] = useState(0);
+  const [params, setParams] = useState<Params>(() => defaultParams());
   const audioRef = useRef<HTMLAudioElement>(null);
   const viewerRef = useRef<ViewerHandle>(null);
+
+  // Live tuning: each change reruns the retarget on every dancer's core. With
+  // the WASM core that stays interactive into the tens of dancers.
+  const setParam = (k: 'rootUpright' | 'footLock' | 'recenterWin', v: number) =>
+    setParams((p) => ({ ...p, [k]: v }));
 
   // Audio is the master clock. The dance plays once (it is only ~30s, and
   // looping a non-cyclic clip pops hard at the seam), so the frame tracks audio
@@ -88,7 +98,8 @@ export default function App() {
 
   return (
     <>
-      <Viewer ref={viewerRef} characterUrl={characterUrl} characterFbx={characterFbx} motion={motion} frame={frame} />
+      <Viewer ref={viewerRef} characterUrl={characterUrl} characterFbx={characterFbx}
+        motion={motion} frame={frame} count={count} params={params} variation={variation} />
       <audio ref={audioRef} src={audioUrl ?? undefined} />
       <div style={bar}>
         <label style={button}>
@@ -105,6 +116,19 @@ export default function App() {
           Download .glb
         </button>
         <span style={{ color: '#cfd2d6' }}>{status}</span>
+      </div>
+      <div style={panel}>
+        <div style={panelTitle}>motion core (WASM)</div>
+        <Slider label="Dancers" value={count} min={1} max={400} step={1}
+          onChange={setCount} />
+        <Slider label="Variation" value={variation} min={0} max={1} step={0.05}
+          onChange={setVariation} fmt={(v) => v.toFixed(2)} />
+        <Slider label="Upright" value={params.rootUpright} min={0} max={1} step={0.05}
+          onChange={(v) => setParam('rootUpright', v)} fmt={(v) => v.toFixed(2)} />
+        <Slider label="Foot lock" value={params.footLock} min={0} max={1} step={0.05}
+          onChange={(v) => setParam('footLock', v)} fmt={(v) => v.toFixed(2)} />
+        <Slider label="Recenter" value={params.recenterWin} min={1} max={121} step={2}
+          onChange={(v) => setParam('recenterWin', v)} />
       </div>
       {motion && (
         <Transport
@@ -132,6 +156,20 @@ export default function App() {
   );
 }
 
+function Slider({ label, value, min, max, step, onChange, fmt }: {
+  label: string; value: number; min: number; max: number; step: number;
+  onChange: (v: number) => void; fmt?: (v: number) => string;
+}) {
+  return (
+    <label style={row}>
+      <span style={{ width: 64 }}>{label}</span>
+      <input type="range" min={min} max={max} step={step} value={value}
+        onChange={(e) => onChange(Number(e.target.value))} style={{ flex: 1 }} />
+      <span style={{ width: 34, textAlign: 'right' }}>{fmt ? fmt(value) : value}</span>
+    </label>
+  );
+}
+
 const bar: CSSProperties = {
   position: 'fixed', top: 12, left: 12, display: 'flex', gap: 12,
   alignItems: 'center', fontFamily: 'system-ui, sans-serif', fontSize: 14,
@@ -140,3 +178,11 @@ const button: CSSProperties = {
   background: '#aa3bff', color: 'white', padding: '8px 14px',
   borderRadius: 6, cursor: 'pointer', userSelect: 'none',
 };
+const panel: CSSProperties = {
+  position: 'fixed', top: 12, right: 12, width: 240, padding: 12,
+  background: 'rgba(20,24,28,0.82)', borderRadius: 8, color: '#cfd2d6',
+  fontFamily: 'system-ui, sans-serif', fontSize: 13,
+  display: 'flex', flexDirection: 'column', gap: 8,
+};
+const panelTitle: CSSProperties = { color: '#aa3bff', fontWeight: 600 };
+const row: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8 };
