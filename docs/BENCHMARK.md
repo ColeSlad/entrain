@@ -20,14 +20,16 @@ and recenter during playback. Measured animation-frame intervals:
 | 25      | 16.8 ms                       | 0                            |
 | 100     | 16.8 ms                       | 0                            |
 | 250     | 16.7 ms                       | 0                            |
-| 400     | 16.7 ms                       | 0                            |
+| 400     | 16.8 ms                       | 0                            |
 
 This checks rendering/input responsiveness while tuning completes incrementally
 in the worker; it does not measure the time until every dancer has adopted a new
 setting. Browser automation round trips for tuning inputs were at most 10 ms
-through 250 dancers and 95 ms at 400. Rapid count reversals while paused and GLB
-export also succeeded, with no browser errors or WASM fallback. These are local
-hardware results, not a guarantee for other GPUs, rigs, or browser configurations.
+through 250 dancers and 99 ms at 400. The post-cleanup check also passed rapid
+count reversals while paused, two character replacements, a new motion upload,
+and GLB export, with no browser errors or WASM fallback. Character replacement
+left exactly one worker and one canvas. These are local hardware results, not a
+guarantee for other GPUs, rigs, or browser configurations.
 
 The following core-only measurements predate the worker integration and exclude
 rendering and worker messaging.

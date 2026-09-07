@@ -6,7 +6,8 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { buildSkeleton, type BuiltSkeleton } from './retarget';
-import type { MotionInput, Params } from './core/retargetCore';
+import type { Params } from './core/retargetCore';
+import { toMotionInput } from './core/motionInput';
 import { FieldWorker } from './core/fieldWorker';
 import { optimizeCharacter } from './optimizeCharacter';
 import type { Motion } from './api';
@@ -20,17 +21,14 @@ interface Dancer {
   built: BuiltSkeleton;
 }
 
-function toMotionInput(m: Motion): MotionInput {
-  return {
-    fps: m.fps,
-    numFrames: m.num_frames,
-    smplPoses: Float32Array.from(m.smpl_poses.flat()),
-    rootTranslation: Float32Array.from(m.root_translation.flat()),
-    footContact: m.foot_contact ? Float32Array.from(m.foot_contact.flat()) : new Float32Array(m.num_frames * 4),
-  };
+interface Character {
+  root: THREE.Object3D;
+  built: BuiltSkeleton;
+  bounds: THREE.Box3;
+  animated: number[];
 }
 
-// Clones share the template's geometry/materials, but own their bone textures.
+// Clones share geometry/materials, but own their bone textures.
 function disposeDancer(d: Dancer): void {
   const skeletons = new Set<THREE.Skeleton>();
   d.group.traverse((node) => {
@@ -50,219 +48,188 @@ const Viewer = forwardRef<ViewerHandle, {
   variation: number;
 }>(function Viewer({ motion, frame, characterUrl, characterFbx, count, params, variation }, ref) {
   const mountRef = useRef<HTMLDivElement>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const controlsRef = useRef<OrbitControls | null>(null);
-  const gridRef = useRef<THREE.GridHelper | null>(null);
-  const templateRef = useRef<THREE.Object3D | null>(null);
-  const builtRef = useRef<BuiltSkeleton | null>(null);
-  const boundsRef = useRef<THREE.Box3 | null>(null);
-  const animatedRef = useRef<number[]>([]);
-  const dancersRef = useRef<Dancer[]>([]);
-  const workerRef = useRef<FieldWorker | null>(null);
-  const resizeRef = useRef(0);
-  const motionRef = useRef<Motion | null>(motion);
-  const frameRef = useRef(frame);
-  const paramsRef = useRef(params);
-  const countRef = useRef(count);
-  const variationRef = useRef(variation);
+  const inputs = useRef({ motion, frame, settings: { count, params, variation } });
+  const sceneRef = useRef<{ sync: () => void; exportGLB: () => Promise<void> } | null>(null);
 
-  function placeDancer(d: Dancer, i: number): void {
-    const n = countRef.current;
-    const cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
-    const size = boundsRef.current!.getSize(new THREE.Vector3());
-    const spacing = (Math.max(size.x, size.z) || 1) * 1.6;
-    d.group.position.set(((i % cols) - (cols - 1) / 2) * spacing, 0,
-      (Math.floor(i / cols) - (rows - 1) / 2) * spacing);
-    d.group.updateMatrix();
-  }
-
-  function frameGrid(): void {
-    const camera = cameraRef.current, controls = controlsRef.current, bounds = boundsRef.current;
-    if (!camera || !controls || !bounds) return;
-    // Use the template bounds and grid dimensions. Computing a skinned bounding
-    // box for every clone revisits every vertex and stalls large count changes.
-    const n = countRef.current;
-    const cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
-    const size = bounds.getSize(new THREE.Vector3());
-    const spacing = (Math.max(size.x, size.z) || 1) * 1.6;
-    const maxDim = Math.max(size.x + (cols - 1) * spacing, size.y, size.z + (rows - 1) * spacing) || 1;
-    const center = bounds.getCenter(new THREE.Vector3());
-    controls.target.copy(center);
-    camera.position.set(center.x + maxDim * 0.7, center.y + maxDim * 0.15, center.z + maxDim * 1.4);
-    camera.near = maxDim / 100;
-    camera.far = maxDim * 100;
-    camera.updateProjectionMatrix();
-    controls.update();
-    gridRef.current!.position.set(center.x, bounds.min.y, center.z);
-    gridRef.current!.scale.setScalar(maxDim * 3);
-  }
-
-  function resizeField(): void {
-    resizeRef.current = 0;
-    const scene = sceneRef.current, template = templateRef.current, built = builtRef.current;
-    if (!scene || !template || !built) return;
-    const dancers = dancersRef.current;
-    const deadline = performance.now() + 4;
-    // Keep existing clones and only add/remove the difference. A short batch
-    // yields to input/rendering; the next batch reads the latest slider target.
-    do {
-      if (dancers.length > countRef.current) {
-        disposeDancer(dancers.pop()!);
-      } else if (dancers.length < countRef.current) {
-        const clone = cloneSkeleton(template);
-        const nodes: THREE.Object3D[] = [];
-        clone.traverse((node) => {
-          nodes.push(node);
-          node.updateMatrix();
-          node.matrixAutoUpdate = false;
-        });
-        const group = new THREE.Group();
-        group.matrixAutoUpdate = false;
-        group.add(clone);
-        const d = { group, built: { ...built, nodes } };
-        placeDancer(d, dancers.length);
-        dancers.push(d);
-        scene.add(group);
-      } else {
-        break;
-      }
-    } while (performance.now() < deadline);
-    if (dancers.length !== countRef.current) resizeRef.current = requestAnimationFrame(resizeField);
-    // A paused scene must also receive a pose for newly added clones.
-    workerRef.current?.invalidateFrame();
-  }
-
-  function scheduleResize(): void {
-    if (!builtRef.current) return;
-    dancersRef.current.forEach(placeDancer);
-    frameGrid();
-    if (!resizeRef.current) resizeRef.current = requestAnimationFrame(resizeField);
-  }
-
-  async function exportGLB(): Promise<void> {
-    const d = dancersRef.current[0], worker = workerRef.current;
-    if (!d || !worker || !motionRef.current) return;
-    try {
-      const out = await worker.bake();
-      if (workerRef.current !== worker) return;
-      const { numFrames: N, fps, numBones: n } = out;
-      const times = Float32Array.from({ length: N }, (_, i) => i / fps);
-      const tracks: THREE.KeyframeTrack[] = [];
-      for (const b of animatedRef.current) {
-        const q = new Float32Array(N * 4);
-        for (let f = 0; f < N; f++) q.set(out.localQuat.subarray((f * n + b) * 4, (f * n + b + 1) * 4), f * 4);
-        tracks.push(new THREE.QuaternionKeyframeTrack(d.built.nodes[b].name + '.quaternion', times, q));
-      }
-      const root = d.built.nodes[0];
-      if (!root.name) root.name = 'DanceRoot';
-      tracks.push(new THREE.VectorKeyframeTrack(root.name + '.position', times, out.rootPos));
-      const clip = new THREE.AnimationClip('dance', N / fps, tracks);
-      new GLTFExporter().parse(root, (result) => {
-        const blob = new Blob([result as ArrayBuffer], { type: 'model/gltf-binary' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'dance.glb';
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }, (error) => console.error('GLB export failed', error), { binary: true, animations: [clip] });
-    } catch (error) {
-      console.error('GLB export failed', error);
-    }
-  }
-
-  useImperativeHandle(ref, () => ({ exportGLB: () => { void exportGLB(); } }), []);
+  useImperativeHandle(ref, () => ({ exportGLB: () => { void sceneRef.current?.exportGLB(); } }), []);
 
   useEffect(() => {
-    motionRef.current = motion;
-    const built = builtRef.current;
-    if (built) workerRef.current?.configure(built.skeleton, motion ? toMotionInput(motion) : null);
-  }, [motion]);
-
-  useEffect(() => {
-    const changedCount = countRef.current !== count;
-    paramsRef.current = params;
-    countRef.current = count;
-    variationRef.current = variation;
-    workerRef.current?.tune({ count, params, variation });
-    if (changedCount) scheduleResize();
-    // Functions read current scene refs, including across character changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params, variation, count]);
-
-  useEffect(() => { frameRef.current = frame; }, [frame]);
+    inputs.current = { motion, frame, settings: { count, params, variation } };
+    sceneRef.current?.sync();
+  }, [motion, frame, count, params, variation]);
 
   useEffect(() => {
     const mount = mountRef.current!;
-    let disposed = false;
+    let disposed = false, raf = 0, resizeFrame = 0;
+    let character: Character | null = null;
+    let applied = inputs.current;
+    let layout = { cols: 1, rows: 1, spacing: 1 };
+    const dancers: Dancer[] = [];
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x111418);
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
     const light = new THREE.DirectionalLight(0xffffff, 2);
     light.position.set(3, 5, 4);
     scene.add(light);
-    sceneRef.current = scene;
     const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 1000);
-    cameraRef.current = camera;
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
     mount.appendChild(renderer.domElement);
     const controls = new OrbitControls(camera, renderer.domElement);
-    controlsRef.current = controls;
     const grid = new THREE.GridHelper(1, 24, 0x444444, 0x2a2a2a);
     scene.add(grid);
-    gridRef.current = grid;
 
     const worker = new FieldWorker((poses, readyCount) => {
-      if (disposed || !builtRef.current) return;
-      const n = builtRef.current.skeleton.numBones;
-      const stride = n * 4 + 3;
-      const dancers = dancersRef.current;
+      if (disposed || !character) return;
+      const n = character.built.skeleton.numBones, stride = n * 4 + 3;
       for (let i = 0; i < Math.min(readyCount, dancers.length); i++) {
         const offset = i * stride, nodes = dancers[i].built.nodes;
-        // Unmapped nodes retain their rest transforms. Only animated bones and
-        // the root need local-matrix updates, once per incoming motion frame.
-        for (const b of animatedRef.current) {
-          const o = offset + b * 4;
-          nodes[b].quaternion.fromArray(poses, o);
+        // Only animated bones and the root need local-matrix updates.
+        for (const b of character.animated) {
+          nodes[b].quaternion.fromArray(poses, offset + b * 4);
           nodes[b].updateMatrix();
         }
         nodes[0].position.fromArray(poses, offset + n * 4);
         nodes[0].updateMatrix();
       }
     });
-    workerRef.current = worker;
-    worker.tune({ count: countRef.current, params: paramsRef.current, variation: variationRef.current });
+    worker.tune(inputs.current.settings);
+
+    function configureMotion(): void {
+      if (character) {
+        const m = inputs.current.motion;
+        worker.configure(character.built.skeleton, m ? toMotionInput(m) : null);
+      }
+    }
+
+    function placeDancer(d: Dancer, i: number): void {
+      const { cols, rows, spacing } = layout;
+      d.group.position.set(((i % cols) - (cols - 1) / 2) * spacing, 0,
+        (Math.floor(i / cols) - (rows - 1) / 2) * spacing);
+      d.group.updateMatrix();
+    }
+
+    function scheduleResize(): void {
+      if (!character) return;
+      // Compute layout once per count change, using cached template bounds.
+      const n = inputs.current.settings.count;
+      const cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
+      const size = character.bounds.getSize(new THREE.Vector3());
+      const spacing = (Math.max(size.x, size.z) || 1) * 1.6;
+      layout = { cols, rows, spacing };
+      dancers.forEach(placeDancer);
+      const maxDim = Math.max(size.x + (cols - 1) * spacing, size.y, size.z + (rows - 1) * spacing) || 1;
+      const center = character.bounds.getCenter(new THREE.Vector3());
+      controls.target.copy(center);
+      camera.position.set(center.x + maxDim * 0.7, center.y + maxDim * 0.15, center.z + maxDim * 1.4);
+      camera.near = maxDim / 100;
+      camera.far = maxDim * 100;
+      camera.updateProjectionMatrix();
+      controls.update();
+      grid.position.set(center.x, character.bounds.min.y, center.z);
+      grid.scale.setScalar(maxDim * 3);
+      if (!resizeFrame) resizeFrame = requestAnimationFrame(resizeField);
+    }
+
+    function resizeField(): void {
+      resizeFrame = 0;
+      if (!character) return;
+      const target = inputs.current.settings.count;
+      const deadline = performance.now() + 4;
+      // Each batch reads the latest target and yields to input/rendering.
+      while (dancers.length !== target) {
+        if (dancers.length > target) {
+          disposeDancer(dancers.pop()!);
+        } else {
+          const clone = cloneSkeleton(character.root);
+          const nodes: THREE.Object3D[] = [];
+          clone.traverse((node) => {
+            nodes.push(node);
+            node.updateMatrix();
+            node.matrixAutoUpdate = false;
+          });
+          const group = new THREE.Group();
+          group.matrixAutoUpdate = false;
+          group.add(clone);
+          const d = { group, built: { ...character.built, nodes } };
+          placeDancer(d, dancers.length);
+          dancers.push(d);
+          scene.add(group);
+        }
+        if (performance.now() >= deadline) break;
+      }
+      if (dancers.length !== target) resizeFrame = requestAnimationFrame(resizeField);
+      worker.invalidateFrame(); // newly added clones also need a pose while paused
+    }
+
+    async function exportGLB(): Promise<void> {
+      const d = dancers[0];
+      if (!d || !character || !inputs.current.motion) return;
+      try {
+        const out = await worker.bake();
+        if (disposed) return;
+        const { numFrames: N, fps, numBones: n } = out;
+        const times = Float32Array.from({ length: N }, (_, i) => i / fps);
+        const tracks: THREE.KeyframeTrack[] = [];
+        for (const b of character.animated) {
+          const q = new Float32Array(N * 4);
+          for (let f = 0; f < N; f++) q.set(out.localQuat.subarray((f * n + b) * 4, (f * n + b + 1) * 4), f * 4);
+          tracks.push(new THREE.QuaternionKeyframeTrack(d.built.nodes[b].name + '.quaternion', times, q));
+        }
+        const root = d.built.nodes[0];
+        if (!root.name) root.name = 'DanceRoot';
+        tracks.push(new THREE.VectorKeyframeTrack(root.name + '.position', times, out.rootPos));
+        const clip = new THREE.AnimationClip('dance', N / fps, tracks);
+        new GLTFExporter().parse(root, (result) => {
+          const blob = new Blob([result as ArrayBuffer], { type: 'model/gltf-binary' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'dance.glb';
+          a.click();
+          URL.revokeObjectURL(a.href);
+        }, (error) => console.error('GLB export failed', error), { binary: true, animations: [clip] });
+      } catch (error) {
+        console.error('GLB export failed', error);
+      }
+    }
+
+    sceneRef.current = {
+      exportGLB,
+      sync() {
+        const next = inputs.current, a = applied.settings, b = next.settings;
+        if (next.motion !== applied.motion) configureMotion();
+        if (a.count !== b.count || a.params !== b.params || a.variation !== b.variation) worker.tune(b);
+        if (a.count !== b.count) scheduleResize();
+        applied = next;
+      },
+    };
 
     function onTemplate(root: THREE.Object3D): void {
       if (disposed) return;
       optimizeCharacter(root);
-      templateRef.current = root;
-      builtRef.current = buildSkeleton(root);
-      boundsRef.current = new THREE.Box3().setFromObject(root);
+      const built = buildSkeleton(root);
+      const bounds = new THREE.Box3().setFromObject(root);
       root.traverse((node) => {
         const mesh = node as THREE.SkinnedMesh;
         if (mesh.isSkinnedMesh) {
-          // Clones inherit this bound, avoiding a vertex-by-vertex sphere
-          // calculation on their first render. Leave room for dancing limbs.
+          // Clones inherit this bound instead of rescanning vertices on first render.
           mesh.boundingSphere = mesh.boundingBox!.getBoundingSphere(new THREE.Sphere());
           mesh.boundingSphere.radius *= 1.5;
         }
       });
-      animatedRef.current = Array.from(new Set(Array.from(builtRef.current.skeleton.smplToTarget).filter((b) => b >= 0)));
-      const m = motionRef.current;
-      worker.configure(builtRef.current.skeleton, m ? toMotionInput(m) : null);
+      const animated = Array.from(new Set(Array.from(built.skeleton.smplToTarget).filter((b) => b >= 0)));
+      character = { root, built, bounds, animated };
+      configureMotion();
       scheduleResize();
     }
     const onError = (error: unknown) => console.error('Character load failed', error);
     if (characterFbx) new FBXLoader().load(characterUrl, onTemplate, undefined, onError);
     else new GLTFLoader().load(characterUrl, (gltf) => onTemplate(gltf.scene), undefined, onError);
 
-    let raf = 0;
     function render(): void {
       raf = requestAnimationFrame(render);
-      worker.requestFrame(frameRef.current);
+      worker.requestFrame(inputs.current.frame);
       controls.update();
       renderer.render(scene, camera);
     }
@@ -276,24 +243,17 @@ const Viewer = forwardRef<ViewerHandle, {
     return () => {
       disposed = true;
       cancelAnimationFrame(raf);
-      cancelAnimationFrame(resizeRef.current);
-      resizeRef.current = 0;
+      cancelAnimationFrame(resizeFrame);
       window.removeEventListener('resize', onResize);
+      sceneRef.current = null;
       worker.dispose();
-      workerRef.current = null;
-      for (const d of dancersRef.current) disposeDancer(d);
-      dancersRef.current = [];
-      templateRef.current = null;
-      builtRef.current = null;
-      boundsRef.current = null;
+      dancers.forEach(disposeDancer);
       controls.dispose();
       grid.geometry.dispose();
       (grid.material as THREE.Material).dispose();
       renderer.dispose();
       mount.removeChild(renderer.domElement);
-      sceneRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [characterUrl, characterFbx]);
 
   return <div ref={mountRef} style={{ position: 'fixed', inset: 0 }} />;
