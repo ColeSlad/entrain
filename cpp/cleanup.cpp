@@ -86,6 +86,7 @@ static std::vector<float> moving_avg2(const std::vector<float>& p, int n, int wi
 void core_compute_root_path(Core& c) {
   const int N = c.numFrames;
   c.rootPath.assign(N * 2, 0.0f);
+  c.smoothedPath.assign(N * 2, 0.0f);
   const int lf = c.lockL, rf = c.lockR;
   if (lf < 0 || rf < 0) return;
 
@@ -109,11 +110,16 @@ void core_compute_root_path(Core& c) {
     raw[f * 2] = offX;
     raw[f * 2 + 1] = offZ;
   }
-  std::vector<float> smoothed = moving_avg2(raw, N, 7);
-  std::vector<float> drift = moving_avg2(smoothed, N, static_cast<int>(c.params.recenterWin));
+  c.smoothedPath = moving_avg2(raw, N, 7);
+  core_recenter_path(c);
+}
+
+void core_recenter_path(Core& c) {
+  const int N = c.numFrames;
+  std::vector<float> drift = moving_avg2(c.smoothedPath, N, static_cast<int>(c.params.recenterWin));
   for (int i = 0; i < N; i++) {
-    c.rootPath[i * 2] = smoothed[i * 2] - drift[i * 2];
-    c.rootPath[i * 2 + 1] = smoothed[i * 2 + 1] - drift[i * 2 + 1];
+    c.rootPath[i * 2] = c.smoothedPath[i * 2] - drift[i * 2];
+    c.rootPath[i * 2 + 1] = c.smoothedPath[i * 2 + 1] - drift[i * 2 + 1];
   }
 }
 

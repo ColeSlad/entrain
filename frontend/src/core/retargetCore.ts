@@ -175,6 +175,7 @@ class TsMotionCore implements MotionCore {
   private bindWorldRot!: Float32Array; // [numBones*4] rest world rotations (tgtRest)
   private groundY = 0; // load-time lowest foot world Y, the floor to clamp to
   private rootPath!: Float32Array; // [numFrames*2] foot-lock x,z offsets, high-passed
+  private smoothedPath!: Float32Array; // cached before the recenter filter
 
   // Reused scratch so per-frame work does not allocate.
   private desiredWorld!: Float32Array; // [numBones*4]
@@ -208,8 +209,15 @@ class TsMotionCore implements MotionCore {
   }
 
   setParams(params: Params): void {
+    const prev = this.params;
     this.params = params;
-    this.recompute();
+    if (prev.rootUpright !== params.rootUpright || prev.coordFix.some((v, i) => v !== params.coordFix[i])) {
+      const cf = params.coordFix;
+      this.coordFixInv = quatConj([cf[0], cf[1], cf[2], cf[3]]);
+      this.computeRootPath();
+    } else if (prev.recenterWin !== params.recenterWin) {
+      this.recenterPath();
+    }
   }
 
   free(): void {
@@ -348,6 +356,7 @@ class TsMotionCore implements MotionCore {
   private computeRootPath(): void {
     const N = this.motion.numFrames;
     this.rootPath = new Float32Array(N * 2);
+    this.smoothedPath = new Float32Array(N * 2);
     const [lf, rf] = [this.skel.lockFeet[0], this.skel.lockFeet[1]];
     if (lf < 0 || rf < 0) return; // no feet to lock; leave offsets at zero
 
@@ -366,11 +375,16 @@ class TsMotionCore implements MotionCore {
       offZ = anchorZ - fz;
       raw[f * 2] = offX; raw[f * 2 + 1] = offZ;
     }
-    const smoothed = movingAvg2(raw, N, 7);
-    const drift = movingAvg2(smoothed, N, this.params.recenterWin);
+    this.smoothedPath = movingAvg2(raw, N, 7);
+    this.recenterPath();
+  }
+
+  private recenterPath(): void {
+    const N = this.motion.numFrames;
+    const drift = movingAvg2(this.smoothedPath, N, this.params.recenterWin);
     for (let i = 0; i < N; i++) {
-      this.rootPath[i * 2] = smoothed[i * 2] - drift[i * 2];
-      this.rootPath[i * 2 + 1] = smoothed[i * 2 + 1] - drift[i * 2 + 1];
+      this.rootPath[i * 2] = this.smoothedPath[i * 2] - drift[i * 2];
+      this.rootPath[i * 2 + 1] = this.smoothedPath[i * 2 + 1] - drift[i * 2 + 1];
     }
   }
 

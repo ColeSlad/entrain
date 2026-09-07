@@ -28,12 +28,12 @@ add_executable(entrain_core
 set_target_properties(entrain_core PROPERTIES OUTPUT_NAME "entrain_core" SUFFIX ".js")
 
 # ES6 module that Vite can import. MODULARIZE wraps the glue in a factory;
-# EXPORT_ES6 emits `export default`. ENVIRONMENT=web drops the Node/shell
+# EXPORT_ES6 emits `export default`. ENVIRONMENT=web,worker drops the Node/shell
 # fallbacks. ALLOW_MEMORY_GROWTH lets the heap grow for large clips.
 target_link_options(entrain_core PRIVATE
   "-sMODULARIZE=1"
   "-sEXPORT_ES6=1"
-  "-sENVIRONMENT=web"
+  "-sENVIRONMENT=web,worker"
   "-sALLOW_MEMORY_GROWTH=1"
   "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPF32','HEAP32']"
   "-sEXPORTED_FUNCTIONS=['_core_create','_setup','_set_params','_compute_all','_compute_frame','_get_out_local_quat','_get_out_root_pos','_get_frame_local_quat','_get_frame_root_pos','_core_free','_malloc','_free']"

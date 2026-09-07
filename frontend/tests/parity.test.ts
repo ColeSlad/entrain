@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, it, expect } from 'vitest';
-import { createTsCore, type MotionCore, type MotionInput, type Skeleton } from '../src/core/retargetCore';
-import { createWasmCore } from '../src/core/wasm';
+import { describe, it, expect, vi } from 'vitest';
+import { createTsCore, type MotionCore, type Skeleton } from '../src/core/retargetCore';
+import { createWasmCore, loadCore } from '../src/core/wasm';
+import { createWasmCoreFromModule } from '../src/core/wasmCore';
+import { toMotionInput } from '../src/core/motionInput';
 import { defaultParams } from '../src/retarget';
 import skeletonJson from './fixtures/skeleton.json';
 import motionJson from './fixtures/motion.json';
@@ -29,21 +31,6 @@ const skeleton: Skeleton = {
   footBones: Int32Array.from(skeletonJson.footBones),
   lockFeet: Int32Array.from(skeletonJson.lockFeet),
 };
-
-function toMotionInput(m: typeof motionJson): MotionInput {
-  const N = m.num_frames;
-  const smplPoses = new Float32Array(N * 72);
-  const rootTranslation = new Float32Array(N * 3);
-  const footContact = new Float32Array(N * 4);
-  for (let f = 0; f < N; f++) {
-    for (let k = 0; k < 72; k++) smplPoses[f * 72 + k] = m.smpl_poses[f][k];
-    const t = m.root_translation[f];
-    rootTranslation[f * 3] = t[0]; rootTranslation[f * 3 + 1] = t[1]; rootTranslation[f * 3 + 2] = t[2];
-    const c = m.foot_contact?.[f];
-    if (c) for (let k = 0; k < 4; k++) footContact[f * 4 + k] = c[k];
-  }
-  return { fps: m.fps, numFrames: N, smplPoses, rootTranslation, footContact };
-}
 
 // Angular distance between two quaternions, in radians. Both are normalized
 // first: the golden is stored rounded (hence slightly non-unit), and 2*acos
@@ -99,13 +86,17 @@ describe('motion core parity', () => {
 
   it('two WASM handles are independent (multi-dancer)', async () => {
     const motion = toMotionInput(motionJson);
-    const a = await createWasmCore({ wasmBinary });
-    const b = await createWasmCore({ wasmBinary });
+    const mod = await loadCore({ wasmBinary });
+    const malloc = vi.spyOn(mod, '_malloc');
+    const a = createWasmCoreFromModule(mod);
+    const b = createWasmCoreFromModule(mod);
     // Same clip, different params: a is the default (de-leaned), b keeps EDGE's
     // lean (rootUpright 0). If the handles shared state, b's setup would corrupt
     // a's output.
     a.setup(skeleton, motion, defaultParams());
     b.setup(skeleton, motion, { ...defaultParams(), rootUpright: 0 });
+    // Both handles share the eight immutable skeleton/motion heap allocations.
+    expect(malloc).toHaveBeenCalledTimes(8);
     const outA = a.computeAll();
     const outB = b.computeAll();
 
@@ -118,6 +109,47 @@ describe('motion core parity', () => {
     }
     expect(diff).toBeGreaterThan(1e-3);
     a.free();
+    // Releasing one dancer must not release another dancer's shared inputs.
+    expect(b.computeAll()).toEqual(outB);
+    a.free(); // idempotent, even though the handle slot can now be reused
     b.free();
+  });
+
+  it('incremental slider changes match fresh setup, including frame playback', async () => {
+    const motion = toMotionInput(motionJson);
+    const wasm = await createWasmCore({ wasmBinary });
+    const ts = createTsCore();
+    const oracle = createTsCore();
+    const initial = defaultParams();
+    wasm.setup(skeleton, motion, initial);
+    ts.setup(skeleton, motion, initial);
+    const changes = [
+      { ...initial, footLock: 0.25 },
+      { ...initial, footLock: 0.25, recenterWin: 21 },
+      { ...initial, rootUpright: 0.4, recenterWin: 121 },
+      { ...initial, coordFix: new Float32Array([0, 0, 0, 1]) },
+      initial,
+    ];
+    try {
+      for (const params of changes) {
+        oracle.setup(skeleton, motion, params);
+        const expected = oracle.computeAll();
+        for (const core of [ts, wasm]) {
+          core.setParams(params);
+          const actual = core.computeAll();
+          let rotationError = 0, positionError = 0;
+          for (let i = 0; i < actual.localQuat.length; i++) rotationError = Math.max(rotationError, Math.abs(actual.localQuat[i] - expected.localQuat[i]));
+          for (let i = 0; i < actual.rootPos.length; i++) positionError = Math.max(positionError, Math.abs(actual.rootPos[i] - expected.rootPos[i]));
+          expect(rotationError).toBeLessThan(1e-4);
+          expect(positionError).toBeLessThan(1e-3);
+          const q = new Float32Array(skeleton.numBones * 4), r = new Float32Array(3);
+          core.computeFrame(37, q, r);
+          expect(q).toEqual(actual.localQuat.slice(37 * q.length, 38 * q.length));
+          expect(r).toEqual(actual.rootPos.slice(37 * 3, 38 * 3));
+        }
+      }
+    } finally {
+      wasm.free();
+    }
   });
 });

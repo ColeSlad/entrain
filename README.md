@@ -30,7 +30,8 @@ audio -> FastAPI job -> Modal GPU (EDGE) -> SMPL motion (frozen contract)
 
 - Frontend: React + Vite + TypeScript + Three.js. Owns the scene, character
   loading, playback, transport, character upload, and GLB export. The numeric
-  motion work is delegated to the WASM core.
+  motion work is delegated to a WASM core in a Web Worker. Crowd size changes
+  reuse existing characters and add/remove clones in short animation-frame batches.
 - Motion core: a C++17 module compiled to WebAssembly (`cpp/`). Does forward
   kinematics, the SMPL-to-Mixamo rest-pose retarget, the coordinate fix, pelvis
   stabilization, grounding, and the foot-lock high-pass. The identical pure-TS
@@ -47,10 +48,19 @@ audio -> FastAPI job -> Modal GPU (EDGE) -> SMPL motion (frozen contract)
 The retarget and cleanup math was ported from TypeScript to C++ for speed, with
 a clean boundary: strings, loading, and rendering stay in JS; JS resolves bone
 names to integer indices once and hands the core only indices and flat typed
-arrays, passed zero-copy through the WASM heap. The two implementations share
+arrays. Skeleton and motion inputs are copied into the WASM heap once and shared
+across dancer handles; outputs are copied into a reusable transferable frame
+buffer. The two implementations share
 one interface (`setup` / `compute_all` / `compute_frame` / `set_params`), so the
 WASM core is the default and the TS oracle takes over automatically if the
 module fails to load.
+
+Live tuning runs in the worker and newer slider values replace pending updates.
+Existing cores use `set_params` without re-uploading the clip: foot-lock strength
+only scales the output, recentering filters a cached path, and rotation changes
+recompute the foot path. Synchronized dancers share a computed frame. Only one
+frame request is in flight, keeping playback from accumulating stale poses.
+Very large crowds can still be limited by GPU skinning and draw calls.
 
 Correctness is gated by a parity test (`frontend/tests/parity.test.ts`): the
 WASM core must match the TS oracle on a committed golden fixture to within
@@ -65,7 +75,7 @@ Measured speedup over the TS path (see `docs/BENCHMARK.md` for method):
 | pose 250 dancers / render frame  | ~3.2 ms   | ~0.29 ms  | ~11x    |
 
 At 250 dancers the motion math is under 2% of a 60 FPS frame budget on WASM
-versus ~19% on TS. The win is compiled C++, zero-copy heap I/O, and batching, not
+versus ~19% on TS. The win is compiled C++, bulk typed-array I/O, and batching, not
 SIMD: `-msimd128` measured within noise, since quaternion math is dependency
 tight (documented honestly in `docs/BENCHMARK.md`).
 
@@ -104,6 +114,9 @@ npm --prefix frontend run bench        # WASM vs TS performance numbers
 npm --prefix frontend run gen:parity   # regenerate the golden fixture
 ```
 
+The benchmark uses the same WASM wrapper as playback. Motion conversion is also
+shared by playback, tests, fixture generation, and the benchmark.
+
 ## Repo layout
 
 ```
@@ -119,7 +132,13 @@ frontend/src/
   retarget.ts       bone-name resolution + buildSkeleton + default params
   core/
     retargetCore.ts pure-TS motion core (oracle + fallback)
-    wasm.ts         loads the WASM module, zero-copy heap I/O
+    motionInput.ts  converts API motion into core input arrays
+    wasm.ts         loads WASM for the browser and worker
+    wasmCore.ts     wraps WASM handles and shares immutable heap inputs
+    fieldCore.ts    incremental crowd tuning and frame computation
+    field.worker.ts runs the motion core away from the rendering thread
+    fieldWorker.ts  transfers current poses and asynchronous export results
+    fieldProtocol.ts shared worker messages and settings
   api.ts            jobs API client
 frontend/tests/     parity harness + fixtures
 backend/

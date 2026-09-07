@@ -21,8 +21,7 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const viewerRef = useRef<ViewerHandle>(null);
 
-  // Live tuning: each change reruns the retarget on every dancer's core. With
-  // the WASM core that stays interactive into the tens of dancers.
+  // Live tuning is sent to the motion worker; React only updates the controls.
   const setParam = (k: 'rootUpright' | 'footLock' | 'recenterWin', v: number) =>
     setParams((p) => ({ ...p, [k]: v }));
 
