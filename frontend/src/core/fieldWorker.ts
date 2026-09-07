@@ -1,5 +1,4 @@
-import type { BakedMotion, FieldSettings } from './fieldCore';
-import type { FieldRequest, FieldResponse } from './fieldProtocol';
+import type { BakedMotion, FieldSettings, FieldRequest, FieldResponse } from './fieldProtocol';
 import type { MotionInput, Skeleton } from './retargetCore';
 
 // One worker and one transferable frame buffer for the whole crowd. At most one

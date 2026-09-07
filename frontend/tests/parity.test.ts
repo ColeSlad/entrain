@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi } from 'vitest';
-import { createTsCore, type MotionCore, type MotionInput, type Skeleton } from '../src/core/retargetCore';
-import { createWasmCore, createWasmCoreFromModule, loadCore } from '../src/core/wasm';
+import { createTsCore, type MotionCore, type Skeleton } from '../src/core/retargetCore';
+import { createWasmCore, loadCore } from '../src/core/wasm';
+import { createWasmCoreFromModule } from '../src/core/wasmCore';
+import { toMotionInput } from '../src/core/motionInput';
 import { defaultParams } from '../src/retarget';
 import skeletonJson from './fixtures/skeleton.json';
 import motionJson from './fixtures/motion.json';
@@ -29,21 +31,6 @@ const skeleton: Skeleton = {
   footBones: Int32Array.from(skeletonJson.footBones),
   lockFeet: Int32Array.from(skeletonJson.lockFeet),
 };
-
-function toMotionInput(m: typeof motionJson): MotionInput {
-  const N = m.num_frames;
-  const smplPoses = new Float32Array(N * 72);
-  const rootTranslation = new Float32Array(N * 3);
-  const footContact = new Float32Array(N * 4);
-  for (let f = 0; f < N; f++) {
-    for (let k = 0; k < 72; k++) smplPoses[f * 72 + k] = m.smpl_poses[f][k];
-    const t = m.root_translation[f];
-    rootTranslation[f * 3] = t[0]; rootTranslation[f * 3 + 1] = t[1]; rootTranslation[f * 3 + 2] = t[2];
-    const c = m.foot_contact?.[f];
-    if (c) for (let k = 0; k < 4; k++) footContact[f * 4 + k] = c[k];
-  }
-  return { fps: m.fps, numFrames: N, smplPoses, rootTranslation, footContact };
-}
 
 // Angular distance between two quaternions, in radians. Both are normalized
 // first: the golden is stored rounded (hence slightly non-unit), and 2*acos

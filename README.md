@@ -111,6 +111,9 @@ npm --prefix frontend run bench        # WASM vs TS performance numbers
 npm --prefix frontend run gen:parity   # regenerate the golden fixture
 ```
 
+The benchmark uses the same WASM wrapper as playback. Motion conversion is also
+shared by playback, tests, fixture generation, and the benchmark.
+
 ## Repo layout
 
 ```
@@ -126,10 +129,13 @@ frontend/src/
   retarget.ts       bone-name resolution + buildSkeleton + default params
   core/
     retargetCore.ts pure-TS motion core (oracle + fallback)
-    wasm.ts         loads WASM, shares immutable heap inputs across handles
+    motionInput.ts  converts API motion into core input arrays
+    wasm.ts         loads WASM for the browser and worker
+    wasmCore.ts     wraps WASM handles and shares immutable heap inputs
     fieldCore.ts    incremental crowd tuning and frame computation
     field.worker.ts runs the motion core away from the rendering thread
     fieldWorker.ts  transfers current poses and asynchronous export results
+    fieldProtocol.ts shared worker messages and settings
   api.ts            jobs API client
 frontend/tests/     parity harness + fixtures
 backend/

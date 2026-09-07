@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FieldCore } from '../src/core/fieldCore';
-import { createTsCore, type MotionCore, type MotionInput, type Skeleton } from '../src/core/retargetCore';
+import { createTsCore, type MotionCore, type Skeleton } from '../src/core/retargetCore';
+import { toMotionInput } from '../src/core/motionInput';
 import { defaultParams } from '../src/retarget';
 import skeletonJson from './fixtures/skeleton.json';
 import motionJson from './fixtures/motion.json';
@@ -14,12 +15,8 @@ const skeleton: Skeleton = {
   footBones: Int32Array.from(skeletonJson.footBones),
   lockFeet: Int32Array.from(skeletonJson.lockFeet),
 };
-const motion: MotionInput = {
-  numFrames: motionJson.num_frames, fps: motionJson.fps,
-  smplPoses: Float32Array.from(motionJson.smpl_poses.flat()),
-  rootTranslation: Float32Array.from(motionJson.root_translation.flat()),
-  footContact: Float32Array.from(motionJson.foot_contact.flat()),
-};
+const motion = toMotionInput(motionJson);
+
 async function settle(field: FieldCore) {
   for (let steps = 0; field.pending; steps++) {
     if (steps > 20) throw new Error('Field failed to settle');

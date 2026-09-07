@@ -1,16 +1,5 @@
-import type { CoreOutput, MotionCore, MotionInput, Params, Skeleton } from './retargetCore';
-
-export interface FieldSettings {
-  count: number;
-  params: Params;
-  variation: number;
-}
-
-export interface BakedMotion extends CoreOutput {
-  fps: number;
-  numFrames: number;
-  numBones: number;
-}
+import type { MotionCore, MotionInput, Params, Skeleton } from './retargetCore';
+import type { BakedMotion, FieldSettings } from './fieldProtocol';
 
 function seedFor(i: number): [number, number, number] {
   const h = (x: number) => { const s = Math.sin(x) * 43758.5453; return s - Math.floor(s); };

@@ -1,5 +1,16 @@
-import type { BakedMotion, FieldSettings } from './fieldCore';
-import type { MotionInput, Skeleton } from './retargetCore';
+import type { CoreOutput, MotionInput, Params, Skeleton } from './retargetCore';
+
+export interface FieldSettings {
+  count: number;
+  params: Params;
+  variation: number;
+}
+
+export interface BakedMotion extends CoreOutput {
+  fps: number;
+  numFrames: number;
+  numBones: number;
+}
 
 export type FieldRequest =
   | { type: 'configure'; generation: number; skeleton: Skeleton; motion: MotionInput | null }
