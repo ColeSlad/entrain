@@ -63,12 +63,14 @@ void core_setup_derived(Core& c) {
   for (const auto& e : entries) { c.order.push_back(e.bone); c.orderSmpl.push_back(e.smpl); }
 
   core_compute_ground(c); // rest floor height (needs bindWorldRot, above)
-  core_update_params(c);  // coord-fix inverse + foot-lock path
+  // setup is followed by set_params; defer the clip pass until params arrive.
+  c.pathDirty = true;
 }
 
 void core_update_params(Core& c) {
   c.coordFixInv = quat_conj(c.params.coordFix);
   core_compute_root_path(c); // depends on rotations (coordFix) and params
+  c.pathDirty = false;
 }
 
 // SMPL local axis-angle (length 72) -> per-joint world rotations, coordinate

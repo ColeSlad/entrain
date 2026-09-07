@@ -67,13 +67,20 @@ EMSCRIPTEN_KEEPALIVE
 void set_params(int h, float rootUpright, float footLock, float recenterWin,
                 float cfx, float cfy, float cfz, float cfw) {
   Core& c = core(h);
+  const Params prev = c.params;
   c.params = Params{rootUpright, footLock, recenterWin, quat{cfx, cfy, cfz, cfw}};
-  core_update_params(c);
+  // Foot-lock strength only scales the output. Recenter only filters the cached
+  // path. Re-run FK over the clip only when the rotations actually change.
+  if (c.numFrames == 0) return;
+  if (c.pathDirty || prev.rootUpright != rootUpright || prev.coordFix.x != cfx || prev.coordFix.y != cfy ||
+      prev.coordFix.z != cfz || prev.coordFix.w != cfw) core_update_params(c);
+  else if (prev.recenterWin != recenterWin) core_recenter_path(c);
 }
 
 EMSCRIPTEN_KEEPALIVE
 void compute_all(int h) {
   Core& c = core(h);
+  if (c.pathDirty) core_update_params(c);
   const int n = c.numBones;
   const size_t nq = static_cast<size_t>(c.numFrames) * n * 4;
   if (c.outLocalQuat.size() != nq) {
@@ -90,6 +97,7 @@ void compute_all(int h) {
 EMSCRIPTEN_KEEPALIVE
 void compute_frame(int h, int frame) {
   Core& c = core(h);
+  if (c.pathDirty) core_update_params(c);
   const int N = c.numFrames;
   int f = ((frame % N) + N) % N;
   core_retarget_frame(c, f, c.frameLocalQuat.data());

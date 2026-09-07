@@ -1,12 +1,13 @@
 // Loads the WASM motion core and exposes it through the same MotionCore
 // interface as the TS oracle, so the two are swappable (WASM as the fast path,
-// the oracle as the fallback). Bulk arrays cross the boundary zero-copy: JS
-// mallocs heap regions, writes inputs through HEAP views, and reads outputs back
-// at the pointers the getters return.
+// the oracle as the fallback). Inputs are uploaded once and shared by dancers
+// using the same skeleton/motion. Outputs are copied into caller-owned buffers.
 import createCore, { type EntrainCore } from 'entrain-core';
 import type { CoreOutput, MotionCore, MotionInput, Params, Skeleton } from './retargetCore';
 
 let corePromise: Promise<EntrainCore> | null = null;
+interface HeapInput { pointers: number[]; references: number }
+const inputCaches = new WeakMap<EntrainCore, WeakMap<object, HeapInput>>();
 
 // Instantiate the module. Memoized for the no-options (browser) path; when
 // options are passed (e.g. wasmBinary under Node tests) a fresh instance is
@@ -20,7 +21,10 @@ export function loadCore(opts?: Record<string, unknown>): Promise<EntrainCore> {
 // A MotionCore backed by the WASM module. Resolve the returned promise once the
 // module is ready; the methods are then synchronous like the oracle's.
 export async function createWasmCore(opts?: Record<string, unknown>): Promise<MotionCore> {
-  const mod = await loadCore(opts);
+  return createWasmCoreFromModule(await loadCore(opts));
+}
+
+export function createWasmCoreFromModule(mod: EntrainCore): MotionCore {
   const cwrap = (name: string, ret: string | null, args: number) =>
     mod.cwrap(name, ret, Array.from({ length: args }, () => 'number'));
   // The module holds many cores; this wrapper owns one handle. Every call
@@ -37,27 +41,47 @@ export async function createWasmCore(opts?: Record<string, unknown>): Promise<Mo
   const _coreFree = cwrap('core_free', null, 1);
 
   const h = _coreCreate() as number;
-  let inputPtrs: number[] = [];
+  let releases: (() => void)[] = [];
+  let freed = false;
   let numBones = 0;
   let numFrames = 0;
+  let cache = inputCaches.get(mod);
+  if (!cache) { cache = new WeakMap(); inputCaches.set(mod, cache); }
 
   // ALLOW_MEMORY_GROWTH can replace the heap buffer, so fetch the HEAP view
   // fresh on every access (after any malloc) rather than caching it.
-  const writeF32 = (a: Float32Array): number => {
-    const ptr = mod._malloc(Math.max(4, a.length * 4));
-    mod.HEAPF32.set(a, ptr >> 2);
-    inputPtrs.push(ptr);
-    return ptr;
-  };
-  const writeI32 = (a: Int32Array): number => {
-    const ptr = mod._malloc(Math.max(4, a.length * 4));
-    mod.HEAP32.set(a, ptr >> 2);
-    inputPtrs.push(ptr);
-    return ptr;
+  const acquire = (key: object, arrays: (Float32Array | Int32Array)[]): number[] => {
+    let entry = cache.get(key);
+    if (!entry) {
+      const pointers: number[] = [];
+      try {
+        for (const a of arrays) {
+          const ptr = mod._malloc(Math.max(4, a.byteLength));
+          if (!ptr) throw new Error('Could not allocate motion input');
+          pointers.push(ptr);
+          if (a instanceof Int32Array) mod.HEAP32.set(a, ptr >> 2);
+          else mod.HEAPF32.set(a, ptr >> 2);
+        }
+      } catch (error) {
+        for (const ptr of pointers) mod._free(ptr);
+        throw error;
+      }
+      entry = { pointers, references: 0 };
+      cache.set(key, entry);
+    }
+    const shared = entry;
+    shared.references++;
+    releases.push(() => {
+      if (--shared.references === 0) {
+        cache.delete(key);
+        for (const ptr of shared.pointers) mod._free(ptr);
+      }
+    });
+    return shared.pointers;
   };
   const freeInputs = () => {
-    for (const p of inputPtrs) mod._free(p);
-    inputPtrs = [];
+    for (const release of releases) release();
+    releases = [];
   };
 
   const core: MotionCore = {
@@ -65,14 +89,11 @@ export async function createWasmCore(opts?: Record<string, unknown>): Promise<Mo
       freeInputs();
       numBones = skeleton.numBones;
       numFrames = motion.numFrames;
-      const pParent = writeI32(skeleton.parentIndex);
-      const pRestQ = writeF32(skeleton.restLocalQuat);
-      const pRestP = writeF32(skeleton.restLocalPos);
-      const pS2T = writeI32(skeleton.smplToTarget);
-      const pFoot = writeI32(skeleton.footBones);
-      const pPoses = writeF32(motion.smplPoses);
-      const pTrans = writeF32(motion.rootTranslation);
-      const pContact = writeF32(motion.footContact);
+      // Skeleton and motion arrays are immutable between setup calls.
+      const [pParent, pRestQ, pRestP, pS2T, pFoot] = acquire(skeleton,
+        [skeleton.parentIndex, skeleton.restLocalQuat, skeleton.restLocalPos, skeleton.smplToTarget, skeleton.footBones]);
+      const [pPoses, pTrans, pContact] = acquire(motion,
+        [motion.smplPoses, motion.rootTranslation, motion.footContact]);
       _setup(
         h, numBones, pParent, pRestQ, pRestP, pS2T, pFoot, skeleton.footBones.length,
         skeleton.lockFeet[0], skeleton.lockFeet[1],
@@ -102,6 +123,8 @@ export async function createWasmCore(opts?: Record<string, unknown>): Promise<Mo
       outRootPos.set(mod.HEAPF32.subarray(r, r + 3));
     },
     free(): void {
+      if (freed) return;
+      freed = true;
       _coreFree(h);
       freeInputs();
     },

@@ -1,6 +1,6 @@
 #pragma once
 // Shared state for the motion core. api.cpp owns the exported entrypoints and a
-// single Core instance; retarget.cpp (and later cleanup.cpp) implement the math
+// table of Core instances; retarget.cpp and cleanup.cpp implement the math
 // over it. Skeleton and motion arrays live in the WASM heap and are owned by JS;
 // the Core just holds the pointers it was handed in setup().
 
@@ -45,6 +45,8 @@ struct Core {
   std::vector<int> orderSmpl;      // SMPL joint per entry of order
   float groundY = 0.0f;            // load-time lowest foot world Y (the floor)
   std::vector<float> rootPath;     // [numFrames*2], foot-lock x,z, high-passed
+  std::vector<float> smoothedPath; // foot-lock before recentering, reused by the slider
+  bool pathDirty = true;
 
   // Output buffers (heap, read back by JS as HEAPF32 views).
   std::vector<float> outLocalQuat;   // [numFrames*numBones*4]
@@ -66,6 +68,7 @@ void core_retarget_frame(const Core& c, int frame, float* outLocal);
 // local rotations. These need target-skeleton world-position FK.
 void core_compute_ground(Core& c);
 void core_compute_root_path(Core& c);
+void core_recenter_path(Core& c);
 void core_cleanup_frame(const Core& c, int frame, const float* localQuat, float* outRoot3);
 
 }  // namespace mc
