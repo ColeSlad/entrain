@@ -77,7 +77,6 @@ button, input, summary { outline-offset: 4px; }
 .button-quiet { color: var(--muted); }
 .icon-button { width: 36px; min-height: 36px; padding: 8px; flex: 0 0 auto; color: var(--muted); }
 .generator-button { font-size: 12px; }
-.connection-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--signal); flex: 0 0 auto; }
 .toolbar-divider { height: 22px; width: 1px; margin: 0 8px; background: var(--border); }
 
 .workspace { min-height: 0; flex: 1; display: flex; gap: 14px; }

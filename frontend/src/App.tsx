@@ -207,7 +207,7 @@ export default function App() {
       <div className="header-actions">
         <button className={`button generator-button ${connection ? 'button-quiet' : 'button-primary'}`}
           onClick={() => setGeneratorOpen(true)} aria-haspopup="dialog" disabled={busy || !!job || cancelling}>
-          {connection ? <span className="connection-dot" /> : <Icon name="connection" />}
+          {!connection && <Icon name="connection" />}
           {connection ? 'Generator connected' : 'Connect generator'}
         </button>
         <span className="toolbar-divider" aria-hidden="true" />
