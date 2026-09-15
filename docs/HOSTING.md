@@ -1,6 +1,10 @@
 # Vercel + bring your own Modal GPU
 
-Vercel serves the static browser app. Each user deploys a private Entrain API and
+Vercel serves the static browser app and a pre-generated Chopin demo. Visitors
+can play, adjust, and export that demo with no account, access token, or GPU.
+No Modal requests are made for demo playback; normal hosting bandwidth applies.
+
+For **custom-song generation**, each user deploys a private Entrain API and
 GPU generator in **their own Modal account**, then enters that API's URL and a
 dedicated Entrain token in the browser. Their audio goes directly to their API;
 Vercel does not receive the upload or run inference.
@@ -98,7 +102,8 @@ npx vercel --prod --project entrain
 ```
 
 Use your existing project, not a new one. `.vercelignore` allows only the build
-inputs, excluding backend files, model weights, local music, environment files,
+inputs, including only the approved Chopin demo audio/motion and excluding
+backend files, model weights, other local music, environment files,
 and generated build directories from CLI uploads. To inspect the selected files
 without uploading or deploying:
 

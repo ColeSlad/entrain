@@ -3,7 +3,7 @@ import Icon from './Icon';
 
 // The audio remains the master clock. Beat markers are static while it plays.
 export default function Transport({
-  playing, currentTime, duration, beats, downbeats, songName, enabled, onTogglePlay, onSeek,
+  playing, currentTime, duration, beats, downbeats, songName, enabled, isDemo = false, onTogglePlay, onSeek,
 }: {
   playing: boolean;
   currentTime: number;
@@ -12,6 +12,7 @@ export default function Transport({
   downbeats: number[];
   songName: string;
   enabled: boolean;
+  isDemo?: boolean;
   onTogglePlay: () => void;
   onSeek: (seconds: number) => void;
 }) {
@@ -21,7 +22,7 @@ export default function Transport({
       <span className="song-icon"><Icon name="music" /></span>
       <div className="song-copy">
         <span className="song-title" title={songName || undefined}>{songName || 'Your music starts here'}</span>
-        <span className="song-detail">{enabled ? playing ? 'Playing' : 'Paused' : 'Upload a song to create a dance'}</span>
+        <span className="song-detail">{isDemo ? 'Saved demo · ' : ''}{enabled ? playing ? 'Playing' : 'Paused' : 'No generator needed for the demo'}</span>
       </div>
     </div>
     <div className="playback-controls">

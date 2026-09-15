@@ -13,7 +13,7 @@ licensed model.
 
 Setup: see docs/HOSTING.md for the entrain-web secret and checkpoint volume.
 Run from backend/:
-    modal run modal_app.py --audio <song.wav>
+    modal run modal_app.py --audio <song.wav> --output <motion.json>
 """
 
 import os
@@ -241,7 +241,22 @@ def web():
 
 
 @app.local_entrypoint()
-def main(audio: str):
+def main(audio: str, output: str = ""):
+    import json
+    from pipeline.contracts import Motion
+
+    # Check before starting billable work. Regeneration must use a new filename
+    # so an existing, reviewed demo cannot be overwritten accidentally.
+    destination = Path(output) if output else None
+    if destination:
+        if destination.exists():
+            raise FileExistsError(f"Output already exists: {destination}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
     data = Path(audio).read_bytes()
-    motion = Generator().generate.remote(data, os.path.basename(audio))
-    print(f"Motion: {motion['num_frames']} frames @ {motion['fps']}fps")
+    motion = Motion.from_dict(Generator().generate.remote(data, os.path.basename(audio))).validate()
+    if destination:
+        payload = json.dumps(motion.to_dict(), allow_nan=False, separators=(",", ":"))
+        with destination.open("x") as file:
+            file.write(payload)
+        print(f"Saved motion to {destination}")
+    print(f"Motion: {motion.num_frames} frames @ {motion.fps}fps")

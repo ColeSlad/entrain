@@ -11,6 +11,8 @@ fallback.
 
 ## What it does
 
+- Open the app and play the saved Chopin demo immediately—no account, token,
+  backend, or GPU required. Dancer controls, character changes, and GLB export work too.
 - Upload an audio file.
 - The backend generates SMPL dance motion with EDGE on a Modal GPU.
 - The motion is retargeted onto a Mixamo character in the browser and played
@@ -87,9 +89,23 @@ tight (documented honestly in `docs/BENCHMARK.md`).
 
 ## Quick start
 
-Prerequisites: Node 24 (tested), Python 3.10+ with a venv, and Emscripten + CMake for the
-WASM core (pinned versions and setup in `docs/SETUP.md`). Real generation also
-needs a Modal account and the gated assets (`docs/SETUP.md`).
+To run the saved demo locally, you need Node 24 (tested) and Emscripten + CMake
+for the WASM core (setup in `docs/SETUP.md`). No Python backend or Modal account
+is needed just to play it:
+
+```sh
+npm --prefix frontend ci
+npm --prefix frontend run dev
+```
+
+Open the Vite URL and click **Play demo**. **Adjust dance** opens the dancer
+count and tuning controls. The demo starts paused and plays a saved 42.5-second
+EDGE generation from the Chopin recording in `assets`. Page loads, replays,
+adjustments, and exports never call Modal. Vercel serves only static files;
+ordinary hosting/bandwidth usage still applies.
+
+Generating dances from your own songs also requires Python 3.10+ with a venv
+and, for real generation, a Modal account and the gated assets (`docs/SETUP.md`).
 
 For **Vercel + your own cloud GPU**, follow [the exact hosting commands](docs/HOSTING.md).
 For local development, run from the repository root:
@@ -117,13 +133,17 @@ Backend, two modes:
 ENTRAIN_MODAL_GENERATE=1 .venv/bin/uvicorn --app-dir backend app:app --reload --port 8000
 ```
 
-Open the Vite URL and upload a song. The panel on the right controls the dancer
-count and live tuning.
-Only the Vite development build defaults to localhost. On first use, production
-requires a generator URL/token. A successful connection saves both in this
+The demo remains available while a custom song generates, and a failed
+generation does not replace it. Only the Vite development build defaults to
+localhost. In production, **custom-song generation** requires a generator
+URL/token; the demo does not. A successful connection saves both in this
 browser's localStorage and restores them after a reload or browser restart.
 **Disconnect** removes the saved connection. Uploading through the public API starts paid generation
 in the generator owner's account. A connection check alone does not start a GPU.
+
+To intentionally regenerate the saved demo, follow
+[the one-time generation commands](docs/SETUP.md#regenerating-the-saved-demo).
+Normal builds and deployments never run generation.
 
 ## Tests and benchmark
 

@@ -9,15 +9,22 @@ import DanceSettings from './DanceSettings';
 import Icon from './Icon';
 import { defaultParams } from './retarget';
 import type { Params } from './core/retargetCore';
+import { DEMO_AUDIO_URL, DEMO_TITLE, useDemo } from './useDemo';
 
 const NO_BEATS: number[] = [];
 
 export default function App() {
-  const [motion, setMotion] = useState<Motion | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [songName, setSongName] = useState('');
+  const demo = useDemo();
+  const [generatedMotion, setMotion] = useState<Motion | null>(null);
+  const [generatedAudioUrl, setAudioUrl] = useState<string | null>(null);
+  const [generatedSongName, setSongName] = useState('');
+  // A late demo response can never replace a user's completed generation.
+  const isDemo = !generatedMotion;
+  const motion = generatedMotion ?? demo.motion;
+  const audioUrl = generatedAudioUrl ?? (demo.motion ? DEMO_AUDIO_URL : null);
+  const songName = generatedSongName || DEMO_TITLE;
   const [currentTime, setCurrentTime] = useState(0);
-  const [playing, setPlaying] = useState(true);
+  const [playing, setPlaying] = useState(false);
   const [status, setStatus] = useState('');
   const [statusError, setStatusError] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -42,6 +49,10 @@ export default function App() {
   const songInputRef = useRef<HTMLInputElement>(null);
   const characterInputRef = useRef<HTMLInputElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => () => {
+    if (generatedAudioUrl) URL.revokeObjectURL(generatedAudioUrl);
+  }, [generatedAudioUrl]);
 
   // Live tuning still goes to the motion worker; React only updates controls.
   const setParam = useCallback((key: 'rootUpright' | 'footLock' | 'recenterWin', value: number) =>
@@ -130,10 +141,7 @@ export default function App() {
       setStatus('Creating your dance. You can explore the stage while you wait.');
       const result = await pollJob(connection, jobId, 1000, 2_100_000, abort.signal);
       if (abort.signal.aborted) return;
-      setAudioUrl((previous) => {
-        if (previous) URL.revokeObjectURL(previous);
-        return URL.createObjectURL(file);
-      });
+      setAudioUrl(URL.createObjectURL(file));
       setSongName(file.name);
       setMotion(result);
       setCurrentTime(0);
@@ -205,7 +213,7 @@ export default function App() {
         <span className="brand-tagline">Music into motion</span>
       </div>
       <div className="header-actions">
-        <button className={`button generator-button ${connection ? 'button-quiet' : 'button-primary'}`}
+        <button className="button button-quiet generator-button"
           onClick={() => setGeneratorOpen(true)} aria-haspopup="dialog" disabled={busy || !!job || cancelling}>
           {!connection && <Icon name="connection" />}
           {connection ? 'Generator connected' : 'Connect generator'}
@@ -225,7 +233,7 @@ export default function App() {
     <main className="workspace">
       <section className="stage" aria-label="Dance studio">
         <div className="stage-toolbar">
-          <div className="stage-heading"><h1>Dance preview</h1><span className="dancer-count">{count} {count === 1 ? 'dancer' : 'dancers'}</span></div>
+          <div className="stage-heading"><h1>{isDemo ? 'Demo preview' : 'Dance preview'}</h1><span className="dancer-count">{count} {count === 1 ? 'dancer' : 'dancers'}</span></div>
           <div className="stage-actions">
             <button className="button stage-button" onClick={() => characterInputRef.current?.click()} disabled={exporting} title={`Change character · ${characterName}`}><Icon name="person" /><span>Character</span></button>
             <button ref={settingsButtonRef} className={`button stage-button ${settingsOpen ? 'is-active' : ''}`} aria-expanded={settingsOpen}
@@ -246,9 +254,18 @@ export default function App() {
             </div>
           </div>
         </div>}
-        {!motion && !busy && <div className="stage-welcome">
+        {isDemo && !busy && (!motion || (!playing && currentTime === 0)) && <div className="stage-welcome">
           <h2>A stage for your music.</h2>
-          <p>{connection ? 'Upload a song and watch it become a dance.' : 'Connect your generator, then upload a song to get moving.'}</p>
+          {demo.status === 'loading' ? <p role="status">Loading the Chopin demo…</p>
+            : demo.status === 'error' ? <>
+              <p role="status">The demo couldn’t load. Check your connection and try again.</p>
+              <button className="button button-primary" onClick={() => {
+                setPlaying(false); setCurrentTime(0); demo.retry();
+              }}>Retry demo</button>
+            </> : <>
+              <p>A saved Chopin dance. No setup needed.</p>
+              <button className="button button-primary" onClick={togglePlay}><Icon name="play" />Play demo</button>
+            </>}
         </div>}
         <div className="stage-footer">
           <span className="camera-hint">Drag to orbit <span>·</span> Scroll to zoom</span>
@@ -259,10 +276,15 @@ export default function App() {
         onVariation={setVariation} onParam={setParam} onClose={closeSettings} />}
     </main>
 
-    <Transport playing={playing} currentTime={currentTime} duration={danceDur} songName={songName} enabled={!!motion}
+    <Transport playing={playing} currentTime={currentTime} duration={danceDur} songName={songName} enabled={!!motion} isDemo={isDemo}
       beats={motion?.audio?.beats ?? NO_BEATS} downbeats={motion?.audio?.downbeats ?? NO_BEATS}
       onTogglePlay={togglePlay} onSeek={seek} />
-    <audio ref={audioRef} src={audioUrl ?? undefined} onEnded={() => setPlaying(false)} />
+    <audio key={audioUrl ?? 'empty'} ref={audioRef} src={audioUrl ?? undefined} preload="auto"
+      onEnded={() => setPlaying(false)} onError={() => {
+        setPlaying(false);
+        if (isDemo) demo.audioFailed();
+        else { setStatusError(true); setStatus('Could not play this audio file. Try another recording.'); }
+      }} />
     <input ref={songInputRef} type="file" accept="audio/*" onChange={(event) => void onFile(event)} disabled={uploadDisabled} hidden aria-label="Upload song" />
     <input ref={characterInputRef} type="file" accept=".glb,.gltf,.fbx" onChange={onCharacterFile} hidden aria-label="Upload character" />
     <GeneratorSettings connection={connection} disabled={busy || !!job || cancelling} open={generatorOpen} onClose={() => setGeneratorOpen(false)}

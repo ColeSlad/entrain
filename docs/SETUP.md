@@ -101,6 +101,40 @@ deployment; this is not a spending cap. EDGE only needs its checkpoint, not the
 SMPL body mesh files. Weights use persistent volumes and the loaded model stays
 warm between requests for up to five idle minutes.
 
+### Regenerating the saved demo
+
+The checked-in demo already contains a real generated dance; **do not run this
+to build, deploy, or view the app**. This command intentionally starts one paid
+GPU invocation in your configured Modal account. Complete the account,
+checkpoint, and secret setup in [HOSTING.md](HOSTING.md) first.
+
+From the repository root:
+
+```sh
+cd backend
+../.venv/bin/modal run modal_app.py \
+  --audio ../assets/demo/chopin.mp3 \
+  --output ../assets/demo/chopin-motion.next.json
+cd ..
+```
+
+The output option validates and saves the result, refuses to overwrite an
+existing file before calling the GPU, and does not automatically retry a failed
+invocation. A failed attempt can still incur charges; check Modal before trying
+again. The normal CLI without `--output` still prints the frame count.
+
+Review the replacement for playback/alignment, then replace
+`assets/demo/chopin-motion.json` with the approved result. Update the provenance
+in `assets/demo/README.md` and the duration assertions in the demo test if they
+change. Commit the demo JSON and `assets/demo/chopin.mp3` alongside the frontend
+changes; never commit model weights or credentials.
+
+The supplied recording is 43.7 seconds; the saved dance is 42.5 seconds because
+EDGE uses fixed overlapping windows. Audio starts at zero and playback ends at
+the motion duration. Vite emits content-hashed audio/JSON URLs, avoiding stale
+demo assets across deployments. Only these specific approved assets are
+allowlisted in `.vercelignore`.
+
 ## 6. WASM motion core toolchain
 
 The performance-critical motion math (FK, retarget, cleanup) is a C++ core in

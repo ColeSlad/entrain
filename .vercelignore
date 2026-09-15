@@ -1,5 +1,5 @@
 # CLI deployments need only the static site's source and its build inputs.
-# In particular, never upload backend model weights, tokens, or local music.
+# Never upload backend model weights, tokens, or unapproved local music.
 /*
 !vercel.json
 !scripts
@@ -8,6 +8,10 @@
 !assets
 assets/*
 !assets/character.glb
+!assets/demo
+assets/demo/*
+!assets/demo/chopin-motion.json
+!assets/demo/chopin.mp3
 
 **/node_modules
 **/.vercel
