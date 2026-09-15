@@ -169,6 +169,30 @@ input[type='range']:disabled::-moz-range-thumb { visibility: hidden; }
 .generator-dialog form { margin-top: 24px; }
 .connected-host { margin-top: 20px; display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.6; color: var(--signal); overflow-wrap: anywhere; }
 .connected-host strong { font-weight: 500; }
+.generator-setup { margin-top: 20px; border: 1px solid var(--border); border-radius: 10px; }
+.generator-setup summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 10px 14px; font-size: 13px; font-weight: 550; border-radius: 9px; }
+.generator-setup summary::-webkit-details-marker { display: none; }
+.generator-setup summary:hover { background: var(--surface-hover); }
+.generator-setup summary .icon { width: 15px; height: 15px; flex: 0 0 auto; color: var(--muted); transition: transform 150ms ease; }
+.generator-setup[open] summary .icon { transform: rotate(90deg); }
+.setup-guide { padding: 10px 14px 16px; font-size: 13px; line-height: 1.65; color: var(--muted); overflow-wrap: anywhere; }
+.setup-guide p + p { margin-top: 8px; }
+.setup-guide a { color: var(--accent); text-underline-offset: 3px; }
+.setup-guide a:hover { color: var(--accent-hover); }
+.setup-guide code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; color: var(--content); }
+.setup-steps { margin: 20px 0 12px; padding-left: 20px; }
+.setup-steps li + li { margin-top: 24px; }
+.setup-steps li::marker { color: var(--content); font-weight: 600; }
+.setup-steps h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--content); }
+.setup-guide strong { color: var(--content); font-weight: 550; }
+.setup-guide .setup-aside { font-size: 12px; margin-top: 8px; }
+.setup-commands { margin: 12px 0; background: var(--background); border-radius: 8px; }
+.setup-command-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 0 12px; font-size: 11px; }
+.setup-command-heading .button { min-height: 44px; padding: 8px; font-size: 12px; gap: 5px; }
+.setup-command-heading .icon { width: 14px; height: 14px; }
+.setup-commands pre { margin: 0; padding: 0 12px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.setup-commands .setup-copy-error { padding: 0 12px 12px; color: var(--error); font-size: 12px; }
+.setup-guide-link { display: inline-flex; align-items: center; min-height: 44px; }
 .form-field { display: flex; flex-direction: column; gap: 8px; font-size: 13px; font-weight: 550; margin-top: 18px; }
 .form-field input { width: 100%; border: 1px solid var(--border); border-radius: 9px; min-height: 44px; padding: 11px 12px; background: var(--background); color: var(--content); font-size: 14px; font-weight: 400; transition: border-color 150ms ease; }
 .form-field input:hover { border-color: var(--muted); }

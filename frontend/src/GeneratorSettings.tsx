@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { checkGenerator, type GeneratorConnection, type GeneratorInfo } from './api';
 import { canReuseGeneratorToken, generatorConnectionFromSettings, writeGeneratorConnection } from './generatorPreferences';
+import GeneratorSetup from './GeneratorSetup';
 import Icon from './Icon';
 
 export default function GeneratorSettings({ connection, disabled, open, onClose, onConnect }: {
@@ -52,6 +53,7 @@ export default function GeneratorSettings({ connection, disabled, open, onClose,
     </div>
     <h2 id="generator-title">{connection ? 'Generator settings' : 'Connect your generator'}</h2>
     {connection && <div className="connected-host"><Icon name="check" /><span>Connected to <strong>{new URL(connection.url).hostname}</strong></span></div>}
+    <GeneratorSetup />
     <form onSubmit={(event) => void connect(event)}>
       <label className="form-field">
         Generator URL
