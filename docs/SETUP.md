@@ -8,7 +8,7 @@ variable or a known path at it. This file grows as later phases add setup.
 
 - Python 3.10.
 - A CUDA GPU for local generation, or a Modal account for remote GPU.
-- Node 18+ for the frontend (added in a later phase).
+- Node 24 for the frontend (tested).
 - Blender or FBX2glTF to convert the Mixamo character to GLB.
 - Emscripten and CMake to build the WASM motion core (see section 6).
 
@@ -19,7 +19,8 @@ Set these in your shell or a local `.env` (gitignored, never committed):
 - `SMPL_MODEL_DIR`: absolute path to the directory holding the SMPL `.pkl`
   files. Read by the generation and Stage 0 render code; never hardcoded.
 
-More variables (Modal, object storage) arrive in Phase 3.
+For the private cloud API secrets and exact Vercel/Modal deployment commands,
+see [HOSTING.md](HOSTING.md). Never put its API token in a `VITE_*` variable.
 
 ## 1. SMPL body model
 
@@ -94,12 +95,11 @@ Only for later finetuning or evaluation. Do not download it for MVP inference.
 
 ## 5. Modal (generation compute)
 
-1. Create a Modal account and run `modal token new`.
-2. Default GPU is A10G. Move to A100 only if the model needs it.
-3. Bring the SMPL files and the EDGE checkpoint into the image through a Modal
-   Volume, not baked into the image. They are large and license-gated.
-4. Cache the loaded model between requests. Do not reload weights per job, to
-   avoid cost and cold-start penalties.
+Follow [HOSTING.md](HOSTING.md) for account setup, private API secrets, checkpoint
+upload, and deployment. The default GPU is A10G, limited to one container per
+deployment; this is not a spending cap. EDGE only needs its checkpoint, not the
+SMPL body mesh files. Weights use persistent volumes and the loaded model stays
+warm between requests for up to five idle minutes.
 
 ## 6. WASM motion core toolchain
 

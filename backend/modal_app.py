@@ -11,8 +11,7 @@ generate_motion runs EDGE as a subprocess (see generate.py) because EDGE_DIR is
 set here. SMPL pkl files are not needed: EDGE uses a hardcoded skeleton, not the
 licensed model.
 
-Setup once:
-    modal volume put entrain-assets backend/checkpoints/checkpoint.pt /checkpoint.pt
+Setup: see docs/HOSTING.md for the entrain-web secret and checkpoint volume.
 Run from backend/:
     modal run modal_app.py --audio <song.wav>
 """
@@ -88,6 +87,7 @@ image = (
     volumes={ASSETS_DIR: assets, CACHE_MOUNT: cache},
     timeout=1800,  # cold start plus the first Jukebox download can take minutes
     scaledown_window=300,  # keep the container (and loaded models) warm 5 min
+    max_containers=1,  # one GPU at a time per user deployment; not a spending cap
 )
 class Generator:
     @modal.enter()
@@ -117,13 +117,16 @@ class Generator:
             f.write(audio_bytes)
             path = f.name
 
-        if self.model is not None:
-            try:
-                return self._generate_cached(path)
-            except Exception as e:
-                print(f"[generate] cached path failed ({e!r}); using subprocess", flush=True)
-        from pipeline.generate import generate_motion
-        return generate_motion(path).to_dict()
+        try:
+            if self.model is not None:
+                try:
+                    return self._generate_cached(path)
+                except Exception as e:
+                    print(f"[generate] cached path failed ({e!r}); using subprocess", flush=True)
+            from pipeline.generate import generate_motion
+            return generate_motion(path).to_dict()
+        finally:
+            Path(path).unlink(missing_ok=True)
 
     def _generate_cached(self, path: str) -> dict:
         # Replicates EDGE test.py's per-request flow with the preloaded model:
@@ -185,6 +188,56 @@ class Generator:
                 downbeats=beats[::4],
             ),
         ).validate().to_dict()
+
+
+# Keep HTTP requests on a small CPU container. Checking auth, decoding audio,
+# and polling must not boot the GPU or load the multi-GB inference environment.
+web_image = (
+    modal.Image.debian_slim(python_version="3.10")
+    .apt_install("ffmpeg")
+    .pip_install("fastapi==0.137.0", "python-multipart==0.0.32")
+    .add_local_python_source("generator_api")
+)
+
+
+@app.function(image=web_image, secrets=[modal.Secret.from_name("entrain-web")],
+              timeout=120, max_containers=1)
+@modal.asgi_app()
+def web():
+    import logging
+    from fastapi import HTTPException
+    from generator_api import create_generator_api
+
+    async def submit(audio: bytes) -> str:
+        call = await Generator().generate.spawn.aio(audio, "input.wav")
+        return call.object_id
+
+    async def poll(identifier: str) -> dict:
+        try:
+            motion = await modal.FunctionCall.from_id(identifier).get.aio(timeout=0)
+            return {"status": "done", "motion": motion, "error": None}
+        except modal.exception.FunctionTimeoutError:
+            return {"status": "error", "motion": None, "error": "Generation exceeded its time limit"}
+        except (modal.exception.OutputExpiredError, modal.exception.NotFoundError) as error:
+            raise HTTPException(410, "Job expired or no longer available") from error
+        except TimeoutError:
+            return {"status": "running", "motion": None, "error": None}
+        except Exception:
+            logging.exception("Generation failed")
+            return {"status": "error", "motion": None, "error": "Generation failed; check Modal logs"}
+
+    async def cancel(identifier: str) -> None:
+        try:
+            await modal.FunctionCall.from_id(identifier).cancel.aio(terminate_containers=True)
+        except (modal.exception.OutputExpiredError, modal.exception.NotFoundError) as error:
+            raise HTTPException(410, "Job expired or no longer available") from error
+
+    return create_generator_api(
+        token=os.environ["ENTRAIN_API_TOKEN"],
+        signing_key=os.environ["ENTRAIN_JOB_SIGNING_KEY"],
+        allowed_origins=[origin.strip() for origin in os.environ["ENTRAIN_ALLOWED_ORIGINS"].split(",") if origin.strip()],
+        submit=submit, poll=poll, cancel=cancel,
+    )
 
 
 @app.local_entrypoint()

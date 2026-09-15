@@ -16,6 +16,8 @@ fallback.
   with the animation baked in.
 - A multi-dancer mode spawns a field of characters with live, per-dancer tuning,
   to exercise the motion core.
+- Host the frontend on Vercel and connect your own private Modal generator using
+  a generator URL and dedicated token. See [hosting instructions](docs/HOSTING.md).
 
 ## Architecture
 
@@ -34,9 +36,11 @@ audio -> FastAPI job -> Modal GPU (EDGE) -> SMPL motion (frozen contract)
   stabilization, grounding, and the foot-lock high-pass. The identical pure-TS
   implementation in `frontend/src/core/retargetCore.ts` is both the correctness
   oracle and the runtime fallback.
-- Backend: FastAPI (`backend/app.py`) runs generation as an in-memory job; the
-  frontend uploads and polls. Generation is EDGE on Modal (`backend/modal_app.py`),
-  behind one swappable function (`backend/pipeline/generate.py`).
+- Backend: the public deployment uses a CPU-only, authenticated FastAPI API
+  (`backend/generator_api.py`) to validate uploads, submit Modal jobs, and poll or
+  cancel them. Signed job IDs survive API restarts. EDGE runs on a separate Modal
+  GPU (`backend/modal_app.py`). `backend/app.py` is the unauthenticated, in-memory
+  local development helper; do not expose it publicly.
 - Contract: `backend/pipeline/contracts.py` freezes the Motion shape (axis-angle
   SMPL poses, root translation, foot contact, audio beats).
 
@@ -78,14 +82,22 @@ tight (documented honestly in `docs/BENCHMARK.md`).
 
 ## Quick start
 
-Prerequisites: Node 18+, Python 3.10+ with a venv, and Emscripten + CMake for the
+Prerequisites: Node 24 (tested), Python 3.10+ with a venv, and Emscripten + CMake for the
 WASM core (pinned versions and setup in `docs/SETUP.md`). Real generation also
 needs a Modal account and the gated assets (`docs/SETUP.md`).
+
+For **Vercel + your own cloud GPU**, follow [the exact hosting commands](docs/HOSTING.md).
+For local development, run from the repository root:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r backend/requirements.txt
+```
 
 Frontend (the WASM core builds automatically via `predev` / `build`):
 
 ```
-npm --prefix frontend install
+npm --prefix frontend ci
 npm --prefix frontend run dev
 ```
 
@@ -95,13 +107,17 @@ Backend, two modes:
 # Local stand-in (no GPU): every upload returns the committed fixture.
 .venv/bin/uvicorn --app-dir backend app:app --reload --port 8000
 
-# Real EDGE on Modal: deploy once, then run with the gate on.
-cd backend && modal deploy modal_app.py
-cd backend && ENTRAIN_MODAL_GENERATE=1 ../.venv/bin/uvicorn app:app --reload --port 8000
+# Real EDGE on Modal: complete the Modal setup/deployment in docs/HOSTING.md,
+# then run this instead of the stand-in (from the repository root).
+ENTRAIN_MODAL_GENERATE=1 .venv/bin/uvicorn --app-dir backend app:app --reload --port 8000
 ```
 
 Open the Vite URL and upload a song. The panel on the right controls the dancer
 count and live tuning.
+Only the Vite development build defaults to localhost. Production starts
+disconnected and requires a generator URL/token. Tokens stay in page memory;
+reloading clears them. Uploading through the public API starts paid generation
+in the generator owner's account. A connection check alone does not start a GPU.
 
 ## Tests and benchmark
 
@@ -109,10 +125,13 @@ count and live tuning.
 npm --prefix frontend run test        # WASM vs TS oracle parity (Vitest)
 npm --prefix frontend run bench        # WASM vs TS performance numbers
 npm --prefix frontend run gen:parity   # regenerate the golden fixture
+.venv/bin/python -m pip install -r backend/requirements-dev.txt
+PYTHONPATH=backend .venv/bin/python -m unittest discover -s backend/tests -v
 ```
 
 The benchmark uses the same WASM wrapper as playback. Motion conversion is also
 shared by playback, tests, fixture generation, and the benchmark.
+API tests run without cloud calls; backend decoding tests require local ffmpeg.
 
 ## Repo layout
 
@@ -137,14 +156,18 @@ frontend/src/
     fieldWorker.ts  transfers current poses and asynchronous export results
     fieldProtocol.ts shared worker messages and settings
   api.ts            jobs API client
+  GeneratorSettings.tsx private generator connection UI (memory-only token)
 frontend/tests/     parity harness + fixtures
 backend/
-  app.py            FastAPI: POST /jobs, GET /jobs/{id}
-  modal_app.py      Modal GPU image + cached EDGE Generator
+  app.py            local-only development jobs server
+  generator_api.py  authenticated health/upload/poll/cancel API
+  modal_app.py      Modal CPU API + GPU image + cached EDGE Generator
+  configure_generator.py creates separate API/job-signing secrets in Modal
+  tests/            no-GPU HTTP and Modal-adapter tests
   pipeline/         contracts.py, generate.py, audio.py
   fixtures/         committed stand-in motion + its generator
 reference/          smpl_to_mixamo_retarget.js (retarget reference)
-docs/               SETUP.md (assets + toolchain), BENCHMARK.md
+docs/               SETUP.md, HOSTING.md (Vercel + BYO GPU), BENCHMARK.md
 assets/character.glb  the default Mixamo character
 ```
 
