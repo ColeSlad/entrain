@@ -215,21 +215,10 @@ export default function App() {
         </button>
         <button className={`button ${connection ? 'button-primary' : 'button-secondary'} upload-button`}
           disabled={uploadDisabled} onClick={() => songInputRef.current?.click()} title={!connection ? 'Connect a generator first' : undefined}>
-          {busy ? <span className="spinner" /> : <Icon name="upload" />}<span>{busy ? 'Creating dance…' : 'Upload song'}</span>
+          {busy ? <span className="spinner" /> : <Icon name="upload" />}<span>{busy ? 'Creating…' : 'Upload song'}</span>
         </button>
       </div>
     </header>
-
-    {status && <div className={`notice ${statusError ? 'notice-error' : ''}`}>
-      <div className="notice-content" role="status">{busy && !statusError ? <span className="spinner" /> : <Icon name={statusError ? 'alert' : 'check'} />}<span>{status}</span></div>
-      <div className="notice-actions">
-        {job && <button className="button button-secondary" onClick={() => void onCancel()} disabled={cancelling}>{cancelling ? 'Cancelling…' : 'Cancel generation'}</button>}
-        {job && !busy && <button className="button button-quiet" disabled={cancelling} onClick={() => {
-          if (window.confirm('Forget this job? This does not stop GPU billing. Cancel it in Modal first.')) setJob(null);
-        }}>Forget job</button>}
-        {!busy && !job && <button className="icon-button" aria-label="Dismiss message" onClick={() => setStatus('')}><Icon name="close" /></button>}
-      </div>
-    </div>}
 
     <main className="workspace">
       <section className="stage" aria-label="Dance studio">
@@ -243,6 +232,18 @@ export default function App() {
         </div>
         <Viewer ref={viewerRef} characterUrl={characterUrl} characterFbx={characterFbx}
           motion={motion} frame={frame} count={count} params={params} variation={variation} />
+        {status && <div className="stage-notices">
+          <div className={`notice ${statusError ? 'notice-error' : ''}`}>
+            <div className="notice-content" role="status" aria-atomic="true">{busy && !statusError ? <span className="spinner" /> : <Icon name={statusError ? 'alert' : 'check'} />}<span>{status}</span></div>
+            <div className="notice-actions">
+              {job && <button className="button button-secondary" onClick={() => void onCancel()} disabled={cancelling}>{cancelling ? 'Cancelling…' : 'Cancel generation'}</button>}
+              {job && !busy && <button className="button button-quiet" disabled={cancelling} onClick={() => {
+                if (window.confirm('Forget this job? This does not stop GPU billing. Cancel it in Modal first.')) setJob(null);
+              }}>Forget job</button>}
+              {!busy && !job && <button className="icon-button" aria-label="Dismiss message" onClick={() => setStatus('')}><Icon name="close" /></button>}
+            </div>
+          </div>
+        </div>}
         {!motion && !busy && <div className="stage-welcome">
           <h2>A stage for your music.</h2>
           <p>{connection ? 'Upload a song and watch it become a dance.' : 'Connect your generator, then upload a song to get moving.'}</p>

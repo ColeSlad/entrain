@@ -148,10 +148,16 @@ input[type='range']:disabled::-moz-range-thumb { visibility: hidden; }
 .playback-time { display: flex; gap: 8px; align-items: center; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .playback-time > :last-child, .time-divider { color: var(--muted); }
 
-.notice { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 12px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); font-size: 13px; line-height: 1.5; }
-.notice-content { display: flex; align-items: center; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
+/* Transient feedback overlays the stage without resizing its canvas. Only the notice captures input. */
+.stage-notices { position: absolute; z-index: 3; inset: 76px 20px 72px; display: flex; align-items: flex-start; pointer-events: none; }
+.notice { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; width: fit-content; max-width: min(560px, 100%); max-height: 100%; overflow: auto; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--content); box-shadow: 0 8px 24px #0003; font-size: 13px; line-height: 1.5; pointer-events: auto; animation: panel-enter 180ms ease-out; }
+.notice-content { display: flex; flex: 1 1 160px; align-items: center; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
+.notice-content > span:last-child { min-width: 0; }
 .notice-error .notice-content { color: var(--error); }
-.notice-actions { display: flex; align-items: center; flex-shrink: 0; gap: 8px; }
+.notice-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; max-width: 100%; margin-left: auto; gap: 8px; }
+@media (prefers-color-scheme: light) {
+  .notice { --accent: #6944ba; }
+}
 .spinner { width: 15px; height: 15px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; flex: 0 0 auto; animation: spin 800ms linear infinite; }
 
 .generator-dialog { width: min(480px, calc(100% - 32px)); max-height: calc(100dvh - 32px); padding: 26px; border-radius: 20px; border: 1px solid var(--border); color: var(--content); background: var(--surface); box-shadow: var(--shadow); overflow: auto; }
@@ -223,8 +229,7 @@ input[type='range']:disabled::-moz-range-thumb { visibility: hidden; }
   .restart-button { width: 44px; }
   .timeline { grid-column: 1; grid-row: 2; }
   .playback-time { grid-column: 2; grid-row: 2; justify-content: flex-end; padding-top: 10px; }
-  .notice { flex-wrap: wrap; gap: 8px; }
-  .notice-actions { margin-left: auto; }
+  .stage-notices { inset: 88px 12px 64px; }
 }
 
 @media (max-width: 480px) {
