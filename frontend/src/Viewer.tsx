@@ -14,6 +14,7 @@ import type { Motion } from './api';
 
 export interface ViewerHandle {
   exportGLB: () => void;
+  resetCamera: () => void;
 }
 
 interface Dancer {
@@ -49,9 +50,12 @@ const Viewer = forwardRef<ViewerHandle, {
 }>(function Viewer({ motion, frame, characterUrl, characterFbx, count, params, variation }, ref) {
   const mountRef = useRef<HTMLDivElement>(null);
   const inputs = useRef({ motion, frame, settings: { count, params, variation } });
-  const sceneRef = useRef<{ sync: () => void; exportGLB: () => Promise<void> } | null>(null);
+  const sceneRef = useRef<{ sync: () => void; exportGLB: () => Promise<void>; resetCamera: () => void } | null>(null);
 
-  useImperativeHandle(ref, () => ({ exportGLB: () => { void sceneRef.current?.exportGLB(); } }), []);
+  useImperativeHandle(ref, () => ({
+    exportGLB: () => { void sceneRef.current?.exportGLB(); },
+    resetCamera: () => sceneRef.current?.resetCamera(),
+  }), []);
 
   useEffect(() => {
     inputs.current = { motion, frame, settings: { count, params, variation } };
@@ -71,12 +75,18 @@ const Viewer = forwardRef<ViewerHandle, {
     const light = new THREE.DirectionalLight(0xffffff, 2);
     light.position.set(3, 5, 4);
     scene.add(light);
-    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 1000);
+    const width = Math.max(mount.clientWidth, 1), height = Math.max(mount.clientHeight, 1);
+    const camera = new THREE.PerspectiveCamera(50, width / height, 0.01, 1000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(width, height);
     mount.appendChild(renderer.domElement);
     const controls = new OrbitControls(camera, renderer.domElement);
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updateMotionPreference = () => { controls.enableDamping = !reducedMotion.matches; };
+    updateMotionPreference();
+    reducedMotion.addEventListener('change', updateMotionPreference);
+    controls.dampingFactor = 0.12;
     const grid = new THREE.GridHelper(1, 24, 0x444444, 0x2a2a2a);
     scene.add(grid);
 
@@ -122,11 +132,13 @@ const Viewer = forwardRef<ViewerHandle, {
       const maxDim = Math.max(size.x + (cols - 1) * spacing, size.y, size.z + (rows - 1) * spacing) || 1;
       const center = character.bounds.getCenter(new THREE.Vector3());
       controls.target.copy(center);
-      camera.position.set(center.x + maxDim * 0.7, center.y + maxDim * 0.15, center.z + maxDim * 1.4);
+      const fit = Math.max(1, 1 / camera.aspect);
+      camera.position.set(center.x + maxDim * 0.7 * fit, center.y + maxDim * 0.15 * fit, center.z + maxDim * 1.4 * fit);
       camera.near = maxDim / 100;
       camera.far = maxDim * 100;
       camera.updateProjectionMatrix();
       controls.update();
+      controls.saveState();
       grid.position.set(center.x, character.bounds.min.y, center.z);
       grid.scale.setScalar(maxDim * 3);
       if (!resizeFrame) resizeFrame = requestAnimationFrame(resizeField);
@@ -196,6 +208,7 @@ const Viewer = forwardRef<ViewerHandle, {
 
     sceneRef.current = {
       exportGLB,
+      resetCamera: () => controls.reset(),
       sync() {
         const next = inputs.current, a = applied.settings, b = next.settings;
         if (next.motion !== applied.motion) configureMotion();
@@ -235,16 +248,24 @@ const Viewer = forwardRef<ViewerHandle, {
     }
     render();
     function onResize(): void {
-      camera.aspect = window.innerWidth / window.innerHeight;
+      const nextWidth = Math.max(mount.clientWidth, 1), nextHeight = Math.max(mount.clientHeight, 1);
+      // Preserve framing when the inspector or viewport changes the canvas size.
+      const previousFit = Math.max(1, 1 / camera.aspect);
+      camera.aspect = nextWidth / nextHeight;
+      const nextFit = Math.max(1, 1 / camera.aspect);
+      camera.position.sub(controls.target).multiplyScalar(nextFit / previousFit).add(controls.target);
+      controls.position0.sub(controls.target0).multiplyScalar(nextFit / previousFit).add(controls.target0);
       camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setSize(nextWidth, nextHeight);
     }
-    window.addEventListener('resize', onResize);
+    const resizeObserver = new ResizeObserver(onResize);
+    resizeObserver.observe(mount);
     return () => {
       disposed = true;
       cancelAnimationFrame(raf);
       cancelAnimationFrame(resizeFrame);
-      window.removeEventListener('resize', onResize);
+      resizeObserver.disconnect();
+      reducedMotion.removeEventListener('change', updateMotionPreference);
       sceneRef.current = null;
       worker.dispose();
       dancers.forEach(disposeDancer);
