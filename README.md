@@ -119,9 +119,10 @@ ENTRAIN_MODAL_GENERATE=1 .venv/bin/uvicorn --app-dir backend app:app --reload --
 
 Open the Vite URL and upload a song. The panel on the right controls the dancer
 count and live tuning.
-Only the Vite development build defaults to localhost. Production starts
-disconnected and requires a generator URL/token. Tokens stay in page memory;
-reloading clears them. Uploading through the public API starts paid generation
+Only the Vite development build defaults to localhost. On first use, production
+requires a generator URL/token. A successful connection saves both in this
+browser's localStorage and restores them after a reload or browser restart.
+**Disconnect** removes the saved connection. Uploading through the public API starts paid generation
 in the generator owner's account. A connection check alone does not start a GPU.
 
 ## Tests and benchmark
@@ -161,7 +162,8 @@ frontend/src/
     fieldWorker.ts  transfers current poses and asynchronous export results
     fieldProtocol.ts shared worker messages and settings
   api.ts            jobs API client
-  GeneratorSettings.tsx private generator connection UI (memory-only token)
+  GeneratorSettings.tsx private generator connection UI
+  generatorPreferences.ts browser persistence for the generator URL and token
 frontend/tests/     parity harness + fixtures
 backend/
   app.py            local-only development jobs server

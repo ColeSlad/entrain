@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { checkGenerator, generatorConnection, type GeneratorConnection, type GeneratorInfo } from './api';
+import { checkGenerator, type GeneratorConnection, type GeneratorInfo } from './api';
+import { canReuseGeneratorToken, generatorConnectionFromSettings, writeGeneratorConnection } from './generatorPreferences';
 import Icon from './Icon';
 
 export default function GeneratorSettings({ connection, disabled, open, onClose, onConnect }: {
@@ -10,11 +11,12 @@ export default function GeneratorSettings({ connection, disabled, open, onClose,
   onConnect: (connection: GeneratorConnection | null, info: GeneratorInfo | null) => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [url, setUrl] = useState(import.meta.env.DEV ? 'http://localhost:8000' : '');
+  const [url, setUrl] = useState(connection?.url ?? (import.meta.env.DEV ? 'http://localhost:8000' : ''));
   const [token, setToken] = useState('');
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState(false);
+  const keepToken = canReuseGeneratorToken(url, connection);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -28,11 +30,13 @@ export default function GeneratorSettings({ connection, disabled, open, onClose,
     setError(false);
     setMessage('Checking connection…');
     try {
-      const next = generatorConnection(url, token, import.meta.env.DEV);
+      const next = generatorConnectionFromSettings(url, token, connection, import.meta.env.DEV);
       const info = await checkGenerator(next);
+      const saved = writeGeneratorConnection(next);
       onConnect(next, info);
+      setUrl(next.url);
       setToken('');
-      setMessage(`${info.mode === 'edge' ? 'Ready to generate' : 'Sample generator connected'} · ${info.min_duration_seconds}–${info.max_duration_seconds} seconds · up to ${Math.floor(info.max_upload_bytes / 1024 / 1024)} MB`);
+      setMessage(`${info.mode === 'edge' ? 'Ready to generate' : 'Sample generator connected'} · ${info.min_duration_seconds}–${info.max_duration_seconds} seconds · up to ${Math.floor(info.max_upload_bytes / 1024 / 1024)} MB. ${saved ? 'Saved in this browser.' : 'Connected for this session. Browser settings could not be saved.'}`);
     } catch (error) {
       setError(true);
       setMessage(error instanceof Error ? error.message : 'Connection failed.');
@@ -56,15 +60,19 @@ export default function GeneratorSettings({ connection, disabled, open, onClose,
       </label>
       <label className="form-field">
         Entrain access token
-        <input type="password" value={token} autoComplete="off" spellCheck={false} placeholder="Your dedicated Entrain token"
+        <input type="password" value={token} autoComplete="off" spellCheck={false}
+          placeholder={keepToken ? 'Leave blank to keep the current token' : 'Your dedicated Entrain token'}
           onChange={(event) => setToken(event.target.value)} disabled={disabled || checking} aria-describedby="token-hint" />
       </label>
-      <p id="token-hint" className="form-hint">Use your dedicated Entrain token, not your Modal account credentials. It stays in memory until you disconnect or reload.</p>
+      <p id="token-hint" className="form-hint">Use your dedicated Entrain token. Your URL and token are saved in this browser. Disconnect to forget them.</p>
       <div className="connection-note">Audio and your token go directly to this URL. Generating a dance uses your cloud account’s GPU budget.</div>
       {message && <p role="status" className={`form-message ${error ? 'is-error' : ''}`}>{message}</p>}
       <div className="dialog-actions">
         {connection && <button type="button" className="button button-quiet" disabled={disabled || checking} onClick={() => {
-          onConnect(null, null); setToken(''); setMessage('Disconnected.'); setError(false);
+          const forgotten = writeGeneratorConnection(null);
+          onConnect(null, null); setUrl(''); setToken('');
+          setMessage(forgotten ? 'Disconnected. Saved settings removed.' : 'Disconnected for this session. Saved settings could not be removed; clear this site’s browser data to forget them.');
+          setError(!forgotten);
         }}>Disconnect</button>}
         <div className="dialog-primary-actions">
           <button type="button" className="button button-secondary" onClick={onClose}>{connection ? 'Done' : 'Cancel'}</button>

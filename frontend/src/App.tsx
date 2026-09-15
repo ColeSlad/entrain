@@ -4,6 +4,7 @@ import Viewer, { type ViewerHandle } from './Viewer';
 import Transport from './Transport';
 import { cancelJob, uploadSong, pollJob, type Motion, type GeneratorConnection, type GeneratorInfo } from './api';
 import GeneratorSettings from './GeneratorSettings';
+import { readGeneratorConnection } from './generatorPreferences';
 import DanceSettings from './DanceSettings';
 import Icon from './Icon';
 import { defaultParams } from './retarget';
@@ -20,8 +21,9 @@ export default function App() {
   const [status, setStatus] = useState('');
   const [statusError, setStatusError] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [connection, setConnection] = useState<GeneratorConnection | null>(
-    import.meta.env.DEV ? { url: 'http://localhost:8000', token: '' } : null,
+  const [connection, setConnection] = useState<GeneratorConnection | null>(() =>
+    readGeneratorConnection(import.meta.env.DEV) ??
+      (import.meta.env.DEV ? { url: 'http://localhost:8000', token: '' } : null),
   );
   const [generatorInfo, setGeneratorInfo] = useState<GeneratorInfo | null>(null);
   const [generatorOpen, setGeneratorOpen] = useState(false);

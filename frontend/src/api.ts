@@ -1,5 +1,5 @@
-// Each request carries a connection snapshot. Never persist the access token or
-// retry job creation automatically: a duplicate POST can incur another GPU bill.
+// Each request carries a connection snapshot. Never retry job creation
+// automatically: a duplicate POST can incur another GPU bill.
 export interface GeneratorConnection {
   url: string;
   token: string;

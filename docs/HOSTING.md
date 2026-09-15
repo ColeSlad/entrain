@@ -124,7 +124,7 @@ only in your private Modal secret and the browser's generator connection panel.
 
 ## 4. Connect and generate
 
-1. Open `https://entrain-rouge.vercel.app` and expand **Generator**.
+1. Open `https://entrain-rouge.vercel.app` and click **Connect generator**.
 2. Enter the Modal **web** URL and your dedicated **Entrain access token**.
 3. Click **Connect generator**. This authenticates against the CPU-only health
    endpoint; it does not start the GPU or prove that the checkpoint loads.
@@ -132,9 +132,18 @@ only in your private Modal secret and the browser's generator connection panel.
    This step starts billable GPU work. Start with a short clip.
 5. Wait for the dance. The first job may need model downloads and initialization.
 
-The token is held only in page memory, not localStorage, sessionStorage, or a
-cookie. Disconnecting or reloading clears it, so reconnect after a refresh. Enter
-it only on a trusted Entrain frontend and send it only to your own generator URL.
+After a successful connection check, the URL and token are saved in this
+browser's localStorage for this Entrain website. Reloading or reopening the
+browser restores the connection. In generator settings, leave the token field
+blank to keep the current token for the same URL, or enter a replacement token.
+A different generator URL requires its own token. **Disconnect** removes the
+saved connection; clearing this site's browser data also removes it. Private
+browsing keeps settings only until the private session ends. If browser storage
+is unavailable, the connection still works for the current page session.
+
+The token is stored on this device and is accessible to scripts on this Entrain
+website. Enter it only on a trusted frontend and send it only to your own
+generator URL. Songs, dances, and running jobs are not saved by this setting.
 
 ## Limits, cancellation, and troubleshooting
 
