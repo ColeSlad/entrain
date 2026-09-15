@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -13,7 +13,7 @@ import { optimizeCharacter } from './optimizeCharacter';
 import type { Motion } from './api';
 
 export interface ViewerHandle {
-  exportGLB: () => void;
+  exportGLB: () => Promise<void>;
   resetCamera: () => void;
 }
 
@@ -49,11 +49,15 @@ const Viewer = forwardRef<ViewerHandle, {
   variation: number;
 }>(function Viewer({ motion, frame, characterUrl, characterFbx, count, params, variation }, ref) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const [characterState, setCharacterState] = useState<{ url: string; error: boolean } | null>(null);
   const inputs = useRef({ motion, frame, settings: { count, params, variation } });
   const sceneRef = useRef<{ sync: () => void; exportGLB: () => Promise<void>; resetCamera: () => void } | null>(null);
 
   useImperativeHandle(ref, () => ({
-    exportGLB: () => { void sceneRef.current?.exportGLB(); },
+    exportGLB: async () => {
+      if (!sceneRef.current) throw new Error('The character is still loading. Try exporting again in a moment.');
+      await sceneRef.current.exportGLB();
+    },
     resetCamera: () => sceneRef.current?.resetCamera(),
   }), []);
 
@@ -80,6 +84,7 @@ const Viewer = forwardRef<ViewerHandle, {
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(width, height);
+    renderer.domElement.setAttribute('aria-label', '3D dance preview. Drag to orbit and scroll to zoom.');
     mount.appendChild(renderer.domElement);
     const controls = new OrbitControls(camera, renderer.domElement);
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -177,10 +182,12 @@ const Viewer = forwardRef<ViewerHandle, {
 
     async function exportGLB(): Promise<void> {
       const d = dancers[0];
-      if (!d || !character || !inputs.current.motion) return;
+      if (!d || !character || !inputs.current.motion) {
+        throw new Error('Wait for the character and dance to finish loading, then try exporting again.');
+      }
       try {
         const out = await worker.bake();
-        if (disposed) return;
+        if (disposed) throw new Error('The character changed during export. Please try again.');
         const { numFrames: N, fps, numBones: n } = out;
         const times = Float32Array.from({ length: N }, (_, i) => i / fps);
         const tracks: THREE.KeyframeTrack[] = [];
@@ -193,16 +200,16 @@ const Viewer = forwardRef<ViewerHandle, {
         if (!root.name) root.name = 'DanceRoot';
         tracks.push(new THREE.VectorKeyframeTrack(root.name + '.position', times, out.rootPos));
         const clip = new THREE.AnimationClip('dance', N / fps, tracks);
-        new GLTFExporter().parse(root, (result) => {
-          const blob = new Blob([result as ArrayBuffer], { type: 'model/gltf-binary' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = 'dance.glb';
-          a.click();
-          URL.revokeObjectURL(a.href);
-        }, (error) => console.error('GLB export failed', error), { binary: true, animations: [clip] });
+        const result = await new GLTFExporter().parseAsync(root, { binary: true, animations: [clip] });
+        const blob = new Blob([result as ArrayBuffer], { type: 'model/gltf-binary' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'dance.glb';
+        a.click();
+        URL.revokeObjectURL(a.href);
       } catch (error) {
         console.error('GLB export failed', error);
+        throw new Error('Could not export the dance. Check that your character is loaded and try again.', { cause: error });
       }
     }
 
@@ -235,8 +242,12 @@ const Viewer = forwardRef<ViewerHandle, {
       character = { root, built, bounds, animated };
       configureMotion();
       scheduleResize();
+      setCharacterState({ url: characterUrl, error: false });
     }
-    const onError = (error: unknown) => console.error('Character load failed', error);
+    const onError = (error: unknown) => {
+      console.error('Character load failed', error);
+      if (!disposed) setCharacterState({ url: characterUrl, error: true });
+    };
     if (characterFbx) new FBXLoader().load(characterUrl, onTemplate, undefined, onError);
     else new GLTFLoader().load(characterUrl, (gltf) => onTemplate(gltf.scene), undefined, onError);
 
@@ -277,7 +288,13 @@ const Viewer = forwardRef<ViewerHandle, {
     };
   }, [characterUrl, characterFbx]);
 
-  return <div ref={mountRef} style={{ position: 'fixed', inset: 0 }} />;
+  const loaded = characterState?.url === characterUrl;
+  return <div className="viewer" ref={mountRef}>
+    {!loaded && <div className="viewer-message" role="status"><span className="spinner" />Loading character…</div>}
+    {loaded && characterState.error && <div className="viewer-message viewer-message-error" role="status">
+      <strong>Couldn’t load this character</strong><p>Choose another rigged GLB, GLTF, or FBX file using Character above.</p>
+    </div>}
+  </div>;
 });
 
 export default Viewer;

@@ -1,44 +1,59 @@
-import { useEffect, useRef, useState } from 'react';
-import type { ChangeEvent, CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import Viewer, { type ViewerHandle } from './Viewer';
 import Transport from './Transport';
 import { cancelJob, uploadSong, pollJob, type Motion, type GeneratorConnection, type GeneratorInfo } from './api';
 import GeneratorSettings from './GeneratorSettings';
+import DanceSettings from './DanceSettings';
+import Icon from './Icon';
 import { defaultParams } from './retarget';
 import type { Params } from './core/retargetCore';
+
+const NO_BEATS: number[] = [];
 
 export default function App() {
   const [motion, setMotion] = useState<Motion | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [songName, setSongName] = useState('');
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [status, setStatus] = useState('');
+  const [statusError, setStatusError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [connection, setConnection] = useState<GeneratorConnection | null>(
     import.meta.env.DEV ? { url: 'http://localhost:8000', token: '' } : null,
   );
   const [generatorInfo, setGeneratorInfo] = useState<GeneratorInfo | null>(null);
+  const [generatorOpen, setGeneratorOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [job, setJob] = useState<{ connection: GeneratorConnection; id: string; abort: AbortController } | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [characterUrl, setCharacterUrl] = useState('/character.glb');
+  const [characterName, setCharacterName] = useState('Default character');
   const [characterFbx, setCharacterFbx] = useState(false);
   const [count, setCount] = useState(1);
   const [variation, setVariation] = useState(0);
   const [params, setParams] = useState<Params>(() => defaultParams());
   const audioRef = useRef<HTMLAudioElement>(null);
   const viewerRef = useRef<ViewerHandle>(null);
+  const songInputRef = useRef<HTMLInputElement>(null);
+  const characterInputRef = useRef<HTMLInputElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
 
-  // Live tuning is sent to the motion worker; React only updates the controls.
-  const setParam = (k: 'rootUpright' | 'footLock' | 'recenterWin', v: number) =>
-    setParams((p) => ({ ...p, [k]: v }));
+  // Live tuning still goes to the motion worker; React only updates controls.
+  const setParam = useCallback((key: 'rootUpright' | 'footLock' | 'recenterWin', value: number) =>
+    setParams((previous) => ({ ...previous, [key]: value })), []);
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    settingsButtonRef.current?.focus();
+  }, []);
 
-  // Audio is the master clock. Looping a non-cyclic clip pops at the seam,
-  // so the dance plays once and the frame tracks audio
-  // time and clamps to the last frame. No default clip; rest until uploaded.
-  const danceDur = motion ? motion.num_frames / motion.fps : 1;
+  // Audio is the master clock. Non-cyclic clips play once and clamp at the end.
+  const danceDur = motion ? motion.num_frames / motion.fps : 0;
   const frame = motion ? Math.min(currentTime * motion.fps, motion.num_frames - 1) : 0;
+  const uploadDisabled = busy || !!job || cancelling || !connection;
 
-  // While playing, follow the audio element's time; stop at the dance's end.
   useEffect(() => {
     if (!playing || !motion) return;
     let raf = 0;
@@ -59,8 +74,6 @@ export default function App() {
     return () => cancelAnimationFrame(raf);
   }, [playing, motion, danceDur]);
 
-  // Reflect play/pause onto the audio element. If the browser blocks autoplay
-  // (no recent user gesture), fall back to paused so the Play button starts it.
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !audioUrl) return;
@@ -68,34 +81,66 @@ export default function App() {
     else audio.pause();
   }, [playing, audioUrl]);
 
-  async function onFile(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
+  const togglePlay = useCallback(() => {
+    if (!motion) return;
+    const audio = audioRef.current;
+    if (audio && (audio.ended || audio.currentTime >= danceDur - 0.05)) {
+      audio.currentTime = 0;
+      setCurrentTime(0);
+    }
+    setPlaying((previous) => !previous);
+  }, [motion, danceDur]);
+
+  const seek = useCallback((seconds: number) => {
+    const time = Math.min(Math.max(seconds, 0), danceDur);
+    if (audioRef.current) audioRef.current.currentTime = time;
+    setCurrentTime(time);
+  }, [danceDur]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target;
+      if (event.code !== 'Space' || event.repeat || event.altKey || event.ctrlKey || event.metaKey ||
+        generatorOpen || !(target instanceof HTMLElement) ||
+        target.closest('input, textarea, select, button, summary, a, [contenteditable="true"]')) return;
+      if (motion) { event.preventDefault(); togglePlay(); }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [motion, generatorOpen, togglePlay]);
+
+  async function onFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file || !connection || busy || job || cancelling) return;
     if (generatorInfo && file.size > generatorInfo.max_upload_bytes) {
-      setStatus('Audio exceeds this generator’s upload limit.');
+      setStatusError(true);
+      setStatus('Audio exceeds this generator’s upload limit. Choose a smaller file.');
       return;
     }
     setBusy(true);
+    setStatusError(false);
     const abort = new AbortController();
     try {
-      setStatus('uploading...');
+      setStatus(`Uploading ${file.name}…`);
       const jobId = await uploadSong(connection, file);
       setJob({ connection, id: jobId, abort });
-      setStatus('generating...');
+      setStatus('Creating your dance. You can explore the stage while you wait.');
       const result = await pollJob(connection, jobId, 1000, 2_100_000, abort.signal);
       if (abort.signal.aborted) return;
-      setAudioUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
+      setAudioUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
         return URL.createObjectURL(file);
       });
+      setSongName(file.name);
       setMotion(result);
       setCurrentTime(0);
       setPlaying(true);
-      setStatus(`playing ${file.name}`);
+      setStatus('');
       setJob(null);
-    } catch (err) {
-      setStatus(abort.signal.aborted ? 'Generation cancelled.' : err instanceof Error ? err.message : 'failed');
+    } catch (error) {
+      setStatusError(!abort.signal.aborted);
+      setStatus(abort.signal.aborted ? 'Generation cancelled.' : error instanceof Error ? error.message : 'Generation failed. Try again.');
     } finally {
       setBusy(false);
     }
@@ -108,8 +153,10 @@ export default function App() {
       await cancelJob(job.connection, job.id);
       job.abort.abort();
       setJob(null);
+      setStatusError(false);
       setStatus('Generation cancelled.');
     } catch {
+      setStatusError(true);
       setStatus('Could not confirm cancellation. Check your Modal dashboard; the job may still be running.');
     } finally {
       setCancelling(false);
@@ -123,113 +170,99 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [busy, job]);
 
-  function onCharacterFile(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+  function onCharacterFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file) return;
+    setCharacterName(file.name);
     setCharacterFbx(file.name.toLowerCase().endsWith('.fbx'));
-    setCharacterUrl((prev) => {
-      if (prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+    setCharacterUrl((previous) => {
+      if (previous.startsWith('blob:')) URL.revokeObjectURL(previous);
       return URL.createObjectURL(file);
     });
   }
 
-  return (
-    <>
-      <Viewer ref={viewerRef} characterUrl={characterUrl} characterFbx={characterFbx}
-        motion={motion} frame={frame} count={count} params={params} variation={variation} />
-      <audio ref={audioRef} src={audioUrl ?? undefined} />
-      <GeneratorSettings connection={connection} disabled={busy || !!job || cancelling} onConnect={(next, info) => {
-        setConnection(next); setGeneratorInfo(info);
-      }} />
-      <div style={bar}>
-        <label style={button}>
-          {busy ? 'working...' : 'Upload song'}
-          <input type="file" accept="audio/*" onChange={onFile} disabled={busy || !!job || cancelling || !connection}
-            style={{ display: 'none' }} />
-        </label>
-        <label style={button}>
-          Character
-          <input type="file" accept=".glb,.gltf,.fbx" onChange={onCharacterFile}
-            style={{ display: 'none' }} />
-        </label>
-        <button style={button} onClick={() => viewerRef.current?.exportGLB()} disabled={!motion}>
-          Download .glb
+  async function onExport() {
+    if (!viewerRef.current || exporting) return;
+    setExporting(true);
+    try {
+      await viewerRef.current.exportGLB();
+    } catch (error) {
+      setStatusError(true);
+      setStatus(error instanceof Error ? error.message : 'Could not export the dance. Try again.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return <div className="app-shell">
+    <header className="app-header">
+      <div className="brand" aria-label="Entrain — music into motion">
+        <span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /><i /></span>
+        <span className="brand-name">entrain</span>
+        <span className="brand-tagline">Music into motion</span>
+      </div>
+      <div className="header-actions">
+        <button className={`button generator-button ${connection ? 'button-quiet' : 'button-primary'}`}
+          onClick={() => setGeneratorOpen(true)} aria-haspopup="dialog" disabled={busy || !!job || cancelling}>
+          {connection ? <span className="connection-dot" /> : <Icon name="connection" />}
+          {connection ? 'Generator connected' : 'Connect generator'}
         </button>
-        {job && <button style={button} onClick={() => void onCancel()} disabled={cancelling}>
-          {cancelling ? 'Cancelling…' : 'Cancel generation'}
-        </button>}
-        {job && !busy && <button style={button} disabled={cancelling} onClick={() => {
+        <span className="toolbar-divider" aria-hidden="true" />
+        <button className="button button-secondary export-button" onClick={() => void onExport()} disabled={!motion || exporting}
+          title={motion ? 'Download the character and animation as a GLB' : 'Generate a dance to export it'}>
+          {exporting ? <span className="spinner" /> : <Icon name="download" />}<span>{exporting ? 'Exporting…' : 'Export GLB'}</span>
+        </button>
+        <button className={`button ${connection ? 'button-primary' : 'button-secondary'} upload-button`}
+          disabled={uploadDisabled} onClick={() => songInputRef.current?.click()} title={!connection ? 'Connect a generator first' : undefined}>
+          {busy ? <span className="spinner" /> : <Icon name="upload" />}<span>{busy ? 'Creating dance…' : 'Upload song'}</span>
+        </button>
+      </div>
+    </header>
+
+    {status && <div className={`notice ${statusError ? 'notice-error' : ''}`}>
+      <div className="notice-content" role="status">{busy && !statusError ? <span className="spinner" /> : <Icon name={statusError ? 'alert' : 'check'} />}<span>{status}</span></div>
+      <div className="notice-actions">
+        {job && <button className="button button-secondary" onClick={() => void onCancel()} disabled={cancelling}>{cancelling ? 'Cancelling…' : 'Cancel generation'}</button>}
+        {job && !busy && <button className="button button-quiet" disabled={cancelling} onClick={() => {
           if (window.confirm('Forget this job? This does not stop GPU billing. Cancel it in Modal first.')) setJob(null);
         }}>Forget job</button>}
-        {!connection && <span style={{ color: '#cfd2d6' }}>Connect a generator to upload music.</span>}
-        <span style={{ color: '#cfd2d6' }}>{status}</span>
+        {!busy && !job && <button className="icon-button" aria-label="Dismiss message" onClick={() => setStatus('')}><Icon name="close" /></button>}
       </div>
-      <div style={panel}>
-        <div style={panelTitle}>motion core (WASM)</div>
-        <Slider label="Dancers" value={count} min={1} max={400} step={1}
-          onChange={setCount} />
-        <Slider label="Variation" value={variation} min={0} max={1} step={0.05}
-          onChange={setVariation} fmt={(v) => v.toFixed(2)} />
-        <Slider label="Upright" value={params.rootUpright} min={0} max={1} step={0.05}
-          onChange={(v) => setParam('rootUpright', v)} fmt={(v) => v.toFixed(2)} />
-        <Slider label="Foot lock" value={params.footLock} min={0} max={1} step={0.05}
-          onChange={(v) => setParam('footLock', v)} fmt={(v) => v.toFixed(2)} />
-        <Slider label="Recenter" value={params.recenterWin} min={1} max={121} step={2}
-          onChange={(v) => setParam('recenterWin', v)} />
-      </div>
-      {motion && (
-        <Transport
-          playing={playing}
-          currentTime={currentTime}
-          duration={danceDur}
-          beats={motion.audio?.beats ?? []}
-          downbeats={motion.audio?.downbeats ?? []}
-          onTogglePlay={() => {
-            const audio = audioRef.current;
-            if (audio && audio.currentTime >= danceDur - 0.05) {
-              audio.currentTime = 0;
-              setCurrentTime(0);
-            }
-            setPlaying((p) => !p);
-          }}
-          onSeek={(s) => {
-            const t = Math.min(Math.max(s, 0), danceDur);
-            if (audioRef.current) audioRef.current.currentTime = t;
-            setCurrentTime(t);
-          }}
-        />
-      )}
-    </>
-  );
-}
+    </div>}
 
-function Slider({ label, value, min, max, step, onChange, fmt }: {
-  label: string; value: number; min: number; max: number; step: number;
-  onChange: (v: number) => void; fmt?: (v: number) => string;
-}) {
-  return (
-    <label style={row}>
-      <span style={{ width: 64 }}>{label}</span>
-      <input type="range" min={min} max={max} step={step} value={value}
-        onChange={(e) => onChange(Number(e.target.value))} style={{ flex: 1 }} />
-      <span style={{ width: 34, textAlign: 'right' }}>{fmt ? fmt(value) : value}</span>
-    </label>
-  );
-}
+    <main className="workspace">
+      <section className="stage" aria-label="Dance studio">
+        <div className="stage-toolbar">
+          <div className="stage-heading"><h1>Dance preview</h1><span className="dancer-count">{count} {count === 1 ? 'dancer' : 'dancers'}</span></div>
+          <div className="stage-actions">
+            <button className="button stage-button" onClick={() => characterInputRef.current?.click()} disabled={exporting} title={`Change character · ${characterName}`}><Icon name="person" /><span>Character</span></button>
+            <button ref={settingsButtonRef} className={`button stage-button ${settingsOpen ? 'is-active' : ''}`} aria-expanded={settingsOpen}
+              aria-controls="dance-settings" onClick={() => setSettingsOpen((previous) => !previous)}><Icon name="tune" /><span>Adjust dance</span></button>
+          </div>
+        </div>
+        <Viewer ref={viewerRef} characterUrl={characterUrl} characterFbx={characterFbx}
+          motion={motion} frame={frame} count={count} params={params} variation={variation} />
+        {!motion && !busy && <div className="stage-welcome">
+          <h2>A stage for your music.</h2>
+          <p>{connection ? 'Upload a song and watch it become a dance.' : 'Connect your generator, then upload a song to get moving.'}</p>
+        </div>}
+        <div className="stage-footer">
+          <span className="camera-hint">Drag to orbit <span>·</span> Scroll to zoom</span>
+          <button className="button stage-button reset-view" onClick={() => viewerRef.current?.resetCamera()}><Icon name="restart" /><span>Reset view</span></button>
+        </div>
+      </section>
+      {settingsOpen && <DanceSettings count={count} variation={variation} params={params} onCount={setCount}
+        onVariation={setVariation} onParam={setParam} onClose={closeSettings} />}
+    </main>
 
-const bar: CSSProperties = {
-  position: 'fixed', top: 12, left: 12, display: 'flex', gap: 12,
-  alignItems: 'center', fontFamily: 'system-ui, sans-serif', fontSize: 14,
-};
-const button: CSSProperties = {
-  background: '#aa3bff', color: 'white', padding: '8px 14px',
-  borderRadius: 6, cursor: 'pointer', userSelect: 'none',
-};
-const panel: CSSProperties = {
-  position: 'fixed', top: 12, right: 12, width: 240, padding: 12,
-  background: 'rgba(20,24,28,0.82)', borderRadius: 8, color: '#cfd2d6',
-  fontFamily: 'system-ui, sans-serif', fontSize: 13,
-  display: 'flex', flexDirection: 'column', gap: 8,
-};
-const panelTitle: CSSProperties = { color: '#aa3bff', fontWeight: 600 };
-const row: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8 };
+    <Transport playing={playing} currentTime={currentTime} duration={danceDur} songName={songName} enabled={!!motion}
+      beats={motion?.audio?.beats ?? NO_BEATS} downbeats={motion?.audio?.downbeats ?? NO_BEATS}
+      onTogglePlay={togglePlay} onSeek={seek} />
+    <audio ref={audioRef} src={audioUrl ?? undefined} onEnded={() => setPlaying(false)} />
+    <input ref={songInputRef} type="file" accept="audio/*" onChange={(event) => void onFile(event)} disabled={uploadDisabled} hidden aria-label="Upload song" />
+    <input ref={characterInputRef} type="file" accept=".glb,.gltf,.fbx" onChange={onCharacterFile} hidden aria-label="Upload character" />
+    <GeneratorSettings connection={connection} disabled={busy || !!job || cancelling} open={generatorOpen} onClose={() => setGeneratorOpen(false)}
+      onConnect={(next, info) => { setConnection(next); setGeneratorInfo(info); }} />
+  </div>;
+}

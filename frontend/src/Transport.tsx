@@ -1,67 +1,58 @@
-import type { CSSProperties } from 'react';
+import { memo, type CSSProperties } from 'react';
+import Icon from './Icon';
 
-// Play/pause and scrub, in song seconds, with beat markers above the bar.
-// Stateless: App owns the audio clock.
+// The audio remains the master clock. Beat markers are static while it plays.
 export default function Transport({
-  playing, currentTime, duration, beats, downbeats, onTogglePlay, onSeek,
+  playing, currentTime, duration, beats, downbeats, songName, enabled, onTogglePlay, onSeek,
 }: {
   playing: boolean;
   currentTime: number;
   duration: number;
   beats: number[];
   downbeats: number[];
+  songName: string;
+  enabled: boolean;
   onTogglePlay: () => void;
   onSeek: (seconds: number) => void;
 }) {
-  return (
-    <div style={bar}>
-      <button onClick={onTogglePlay} style={btn}>{playing ? 'Pause' : 'Play'}</button>
-      <div style={track}>
-        <div style={tickRow}>
-          {duration > 0 && beats.map((t, i) =>
-            t <= duration ? <span key={`b${i}`} style={tickStyle(t / duration, false)} /> : null)}
-          {duration > 0 && downbeats.map((t, i) =>
-            t <= duration ? <span key={`d${i}`} style={tickStyle(t / duration, true)} /> : null)}
-        </div>
-        <input
-          type="range"
-          min={0}
-          max={duration || 0}
-          step={0.01}
-          value={Math.min(currentTime, duration || 0)}
-          onChange={(e) => onSeek(Number(e.target.value))}
-          style={{ width: '100%', display: 'block' }}
-        />
+  const progress = duration > 0 ? Math.min(currentTime / duration, 1) * 100 : 0;
+  return <footer className={`transport ${!enabled ? 'transport-empty' : ''}`} aria-label="Music playback">
+    <div className="song-info">
+      <span className="song-icon"><Icon name="music" /></span>
+      <div className="song-copy">
+        <span className="song-title" title={songName || undefined}>{songName || 'Your music starts here'}</span>
+        <span className="song-detail">{enabled ? playing ? 'Playing' : 'Paused' : 'Upload a song to create a dance'}</span>
       </div>
-      <span style={time}>{fmt(currentTime)} / {fmt(duration)}</span>
     </div>
-  );
+    <div className="playback-controls">
+      <button className="icon-button restart-button" disabled={!enabled} onClick={() => onSeek(0)} aria-label="Back to start" title="Back to start"><Icon name="restart" /></button>
+      <button className="play-button" disabled={!enabled} onClick={onTogglePlay} aria-label={playing && enabled ? 'Pause' : 'Play'} title={playing && enabled ? 'Pause (Space)' : 'Play (Space)'}>
+        <Icon name={playing && enabled ? 'pause' : 'play'} />
+      </button>
+    </div>
+    <div className="timeline">
+      <BeatMarkers duration={duration} beats={beats} downbeats={downbeats} />
+      <input type="range" aria-label="Playback position" aria-valuetext={`${fmt(currentTime)} of ${fmt(duration)}`}
+        min={0} max={duration || 0} step={0.01} value={Math.min(currentTime, duration || 0)} disabled={!enabled}
+        onChange={(event) => onSeek(Number(event.target.value))}
+        style={{ '--range-progress': `${progress}%` } as CSSProperties} />
+    </div>
+    <div className="playback-time"><span>{fmt(currentTime)}</span><span className="time-divider">/</span><span>{fmt(duration)}</span></div>
+  </footer>;
 }
 
-function fmt(s: number): string {
-  if (!isFinite(s)) return '0:00';
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  return `${m}:${sec.toString().padStart(2, '0')}`;
-}
+const BeatMarkers = memo(function BeatMarkers({ duration, beats, downbeats }: {
+  duration: number; beats: number[]; downbeats: number[];
+}) {
+  return <div className="beat-markers" aria-hidden="true">
+    {duration > 0 && beats.map((time, index) => time <= duration
+      ? <span key={`b${index}`} style={{ left: `${time / duration * 100}%` }} /> : null)}
+    {duration > 0 && downbeats.map((time, index) => time <= duration
+      ? <span className="downbeat" key={`d${index}`} style={{ left: `${time / duration * 100}%` }} /> : null)}
+  </div>;
+});
 
-function tickStyle(frac: number, down: boolean): CSSProperties {
-  return {
-    position: 'absolute', left: `${frac * 100}%`, transform: 'translateX(-50%)',
-    bottom: 0, width: down ? 2 : 1, height: down ? 8 : 5,
-    background: down ? '#ffffff' : '#6b6f76',
-  };
+function fmt(seconds: number): string {
+  if (!isFinite(seconds)) return '0:00';
+  return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
 }
-
-const bar: CSSProperties = {
-  position: 'fixed', left: 12, right: 12, bottom: 12, display: 'flex', gap: 12,
-  alignItems: 'center', fontFamily: 'system-ui, sans-serif', fontSize: 13,
-  color: '#cfd2d6', background: 'rgba(20,22,26,0.7)', padding: '8px 12px', borderRadius: 8,
-};
-const btn: CSSProperties = {
-  background: '#aa3bff', color: 'white', border: 'none', padding: '6px 14px',
-  borderRadius: 6, cursor: 'pointer', minWidth: 64,
-};
-const track: CSSProperties = { flex: 1, position: 'relative', paddingTop: 8 };
-const tickRow: CSSProperties = { position: 'absolute', left: 0, right: 0, top: 0, height: 8, pointerEvents: 'none' };
-const time: CSSProperties = { fontVariantNumeric: 'tabular-nums', minWidth: 90, textAlign: 'right' };
