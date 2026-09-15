@@ -21,6 +21,8 @@ fallback.
   to exercise the motion core.
 - Host the frontend on Vercel and connect your own private Modal generator using
   a generator URL and dedicated token. See [hosting instructions](docs/HOSTING.md).
+  Pushes to `main` automatically build the C++/WASM and frontend, run frontend
+  tests, and publish only `frontend/dist` using the committed Vercel configuration.
 
 ## Architecture
 

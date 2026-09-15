@@ -118,8 +118,8 @@ Install:
 
 ```
 # emsdk
-git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
-cd ~/emsdk && ./emsdk install latest && ./emsdk activate latest
+git clone --branch 6.0.0 --depth 1 https://github.com/emscripten-core/emsdk.git ~/emsdk
+cd ~/emsdk && ./emsdk install 6.0.0 && ./emsdk activate 6.0.0
 
 # cmake (macOS)
 brew install cmake
@@ -139,6 +139,11 @@ npm --prefix frontend run build:wasm   # emits build/, copies module to
 first step, so the module is always present. Both the CMake cache in `build/`
 and the copied module in `frontend/src/core/generated/` are gitignored; only the
 C++ source and `cpp/build.sh` are committed.
+
+Vercel installs the same Emscripten version automatically through
+`scripts/vercel-build.sh`, with CMake from its Linux package repository when
+needed. The build runs from the repository root and publishes `frontend/dist`;
+see [HOSTING.md](HOSTING.md#3-publish-the-updated-frontend).
 
 ## GPU memory
 

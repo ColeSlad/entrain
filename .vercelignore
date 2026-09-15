@@ -1,0 +1,16 @@
+# CLI deployments need only the static site's source and its build inputs.
+# In particular, never upload backend model weights, tokens, or local music.
+/*
+!vercel.json
+!scripts
+!cpp
+!frontend
+!assets
+assets/*
+!assets/character.glb
+
+**/node_modules
+**/.vercel
+**/.env*
+frontend/dist
+frontend/src/core/generated

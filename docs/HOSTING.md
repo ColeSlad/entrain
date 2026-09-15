@@ -73,26 +73,54 @@ a while. Deployment does not submit a dance-generation job.
 
 ## 3. Publish the updated frontend
 
-The previously deployed site needs the new generator settings UI. From the
-repository root, using Node 24 and the Emscripten/CMake toolchain from
-[SETUP.md](SETUP.md#6-wasm-motion-core-toolchain):
+The Vercel project is connected to GitHub: pushing to `main` builds and publishes
+production automatically. Keep the project's **Root Directory** at `.` and
+**Node.js Version** at `24.x`. Do not change the root to `frontend`, because the
+build also needs `cpp/` and `assets/`.
+
+The repository's `vercel.json` supplies the rest of the settings:
+
+- Framework: **Other** (`null` in the config).
+- Install command: `npm --prefix frontend ci`.
+- Build command: `bash scripts/vercel-build.sh`.
+- Output directory: **`frontend/dist`**, never the repository root.
+
+The build script installs CMake if missing and downloads the pinned Emscripten
+6.0.0 SDK in a temporary directory. It compiles C++ to WASM, builds the React
+frontend, and runs the frontend tests (including WASM/TS parity) before publishing.
+The first build takes longer because it downloads the compiler. It does not
+deploy Modal, load model weights, or start GPU work.
+
+For a manual source deployment, run from the repository root:
+
+```sh
+npx vercel --prod --project entrain
+```
+
+Use your existing project, not a new one. `.vercelignore` allows only the build
+inputs, excluding backend files, model weights, local music, environment files,
+and generated build directories from CLI uploads. To inspect the selected files
+without uploading or deploying:
+
+```sh
+npx vercel deploy --dry --json --project entrain
+```
+
+Do not use the earlier `--cwd frontend/dist` workflow with this repository-linked
+project: Vercel can resolve it back to the repository root. The source-build
+configuration above now handles both GitHub and CLI deployments consistently.
+
+To verify the build locally with an existing Emscripten 6.0.0 installation:
 
 ```sh
 npm --prefix frontend ci
-npm --prefix frontend run build
-npx vercel --cwd frontend/dist --prod
+EMSDK="$HOME/emsdk" bash scripts/vercel-build.sh
 ```
 
-When prompted, link to your **existing Entrain Vercel project**, so production
-continues using `https://entrain-rouge.vercel.app`. For this prebuilt static
-deployment, use framework **Other**, no build command, and output directory `.`.
-Do not choose a new project. Rebuilding `dist` can remove its local `.vercel`
-linking metadata, so be prepared to select the existing project again.
-
 No Vercel environment variables are required. In particular, never add API
-tokens as `VITE_*` variables: those become public JavaScript. This workflow builds
-WASM locally; automatic Git-based Vercel builds would need their own Emscripten
-setup and are not configured by these commands.
+tokens as `VITE_*` variables: those become public JavaScript. Answer **n** if the
+CLI asks to pull development environment variables. The Entrain token belongs
+only in your private Modal secret and the browser's generator connection panel.
 
 ## 4. Connect and generate
 
@@ -110,6 +138,9 @@ it only on a trusted Entrain frontend and send it only to your own generator URL
 
 ## Limits, cancellation, and troubleshooting
 
+- **Vercel says the page does not exist:** check that the latest deployment used
+  `scripts/vercel-build.sh` and published `frontend/dist`. Serving the repository
+  root without building produces a deployment with no root `index.html`.
 - **Rejected token:** use the Entrain token, not a Modal account token. After
   changing a Modal Secret, redeploy so containers use the new values.
 - **Cannot reach generator:** check the URL and Modal deployment logs. The exact
