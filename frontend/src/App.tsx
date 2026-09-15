@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, CSSProperties } from 'react';
 import Viewer, { type ViewerHandle } from './Viewer';
 import Transport from './Transport';
-import { uploadSong, pollJob, type Motion } from './api';
+import { cancelJob, uploadSong, pollJob, type Motion, type GeneratorConnection, type GeneratorInfo } from './api';
+import GeneratorSettings from './GeneratorSettings';
 import { defaultParams } from './retarget';
 import type { Params } from './core/retargetCore';
 
@@ -13,6 +14,12 @@ export default function App() {
   const [playing, setPlaying] = useState(true);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [connection, setConnection] = useState<GeneratorConnection | null>(
+    import.meta.env.DEV ? { url: 'http://localhost:8000', token: '' } : null,
+  );
+  const [generatorInfo, setGeneratorInfo] = useState<GeneratorInfo | null>(null);
+  const [job, setJob] = useState<{ connection: GeneratorConnection; id: string; abort: AbortController } | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [characterUrl, setCharacterUrl] = useState('/character.glb');
   const [characterFbx, setCharacterFbx] = useState(false);
   const [count, setCount] = useState(1);
@@ -25,8 +32,8 @@ export default function App() {
   const setParam = (k: 'rootUpright' | 'footLock' | 'recenterWin', v: number) =>
     setParams((p) => ({ ...p, [k]: v }));
 
-  // Audio is the master clock. The dance plays once (it is only ~30s, and
-  // looping a non-cyclic clip pops hard at the seam), so the frame tracks audio
+  // Audio is the master clock. Looping a non-cyclic clip pops at the seam,
+  // so the dance plays once and the frame tracks audio
   // time and clamps to the last frame. No default clip; rest until uploaded.
   const danceDur = motion ? motion.num_frames / motion.fps : 1;
   const frame = motion ? Math.min(currentTime * motion.fps, motion.num_frames - 1) : 0;
@@ -63,13 +70,21 @@ export default function App() {
 
   async function onFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    e.target.value = '';
+    if (!file || !connection || busy || job || cancelling) return;
+    if (generatorInfo && file.size > generatorInfo.max_upload_bytes) {
+      setStatus('Audio exceeds this generator’s upload limit.');
+      return;
+    }
     setBusy(true);
+    const abort = new AbortController();
     try {
       setStatus('uploading...');
-      const jobId = await uploadSong(file);
+      const jobId = await uploadSong(connection, file);
+      setJob({ connection, id: jobId, abort });
       setStatus('generating...');
-      const result = await pollJob(jobId);
+      const result = await pollJob(connection, jobId, 1000, 2_100_000, abort.signal);
+      if (abort.signal.aborted) return;
       setAudioUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return URL.createObjectURL(file);
@@ -78,12 +93,35 @@ export default function App() {
       setCurrentTime(0);
       setPlaying(true);
       setStatus(`playing ${file.name}`);
+      setJob(null);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'failed');
+      setStatus(abort.signal.aborted ? 'Generation cancelled.' : err instanceof Error ? err.message : 'failed');
     } finally {
       setBusy(false);
     }
   }
+
+  async function onCancel() {
+    if (!job || cancelling) return;
+    setCancelling(true);
+    try {
+      await cancelJob(job.connection, job.id);
+      job.abort.abort();
+      setJob(null);
+      setStatus('Generation cancelled.');
+    } catch {
+      setStatus('Could not confirm cancellation. Check your Modal dashboard; the job may still be running.');
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!busy && !job) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [busy, job]);
 
   function onCharacterFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -100,10 +138,13 @@ export default function App() {
       <Viewer ref={viewerRef} characterUrl={characterUrl} characterFbx={characterFbx}
         motion={motion} frame={frame} count={count} params={params} variation={variation} />
       <audio ref={audioRef} src={audioUrl ?? undefined} />
+      <GeneratorSettings connection={connection} disabled={busy || !!job || cancelling} onConnect={(next, info) => {
+        setConnection(next); setGeneratorInfo(info);
+      }} />
       <div style={bar}>
         <label style={button}>
           {busy ? 'working...' : 'Upload song'}
-          <input type="file" accept="audio/*" onChange={onFile} disabled={busy}
+          <input type="file" accept="audio/*" onChange={onFile} disabled={busy || !!job || cancelling || !connection}
             style={{ display: 'none' }} />
         </label>
         <label style={button}>
@@ -114,6 +155,13 @@ export default function App() {
         <button style={button} onClick={() => viewerRef.current?.exportGLB()} disabled={!motion}>
           Download .glb
         </button>
+        {job && <button style={button} onClick={() => void onCancel()} disabled={cancelling}>
+          {cancelling ? 'Cancelling…' : 'Cancel generation'}
+        </button>}
+        {job && !busy && <button style={button} disabled={cancelling} onClick={() => {
+          if (window.confirm('Forget this job? This does not stop GPU billing. Cancel it in Modal first.')) setJob(null);
+        }}>Forget job</button>}
+        {!connection && <span style={{ color: '#cfd2d6' }}>Connect a generator to upload music.</span>}
         <span style={{ color: '#cfd2d6' }}>{status}</span>
       </div>
       <div style={panel}>

@@ -41,6 +41,14 @@ _jobs: dict[str, dict] = {}
 USE_MODAL = os.environ.get("ENTRAIN_MODAL_GENERATE") == "1"
 
 
+@app.get("/health")
+async def health() -> dict:
+    # Local development only. The public deployment uses generator_api.py.
+    return {"service": "entrain", "api_version": 1, "mode": "edge" if USE_MODAL else "fixture",
+            "max_upload_bytes": 20 * 1024 * 1024, "min_duration_seconds": 0,
+            "max_duration_seconds": 120}
+
+
 def _run_job(job_id: str, audio_path: str) -> None:
     """Run generation in the background and record the result on the job."""
     try:
