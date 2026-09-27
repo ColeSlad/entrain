@@ -11,5 +11,5 @@ export interface CharacterChoice {
 // selected. Keep the existing lightweight default on first load.
 export const BUILTIN_CHARACTERS: readonly CharacterChoice[] = [
   { id: 'default', name: 'Default character', url: '/character.glb', fbx: false },
-  { id: 'ch14', name: 'CH14', url: ch14Url, fbx: true },
+  { id: 'ch14', name: 'Mouse', url: ch14Url, fbx: true },
 ];

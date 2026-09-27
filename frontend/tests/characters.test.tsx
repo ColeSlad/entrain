@@ -7,9 +7,9 @@ import CharacterPicker from '../src/CharacterPicker';
 import { disposeCharacter } from '../src/disposeCharacter';
 
 describe('built-in characters', () => {
-  it('keeps the existing default and bundles a binary FBX URL for CH14', () => {
+  it('keeps the existing default and bundles a binary FBX URL for Mouse', () => {
     expect(BUILTIN_CHARACTERS[0]).toMatchObject({ id: 'default', url: '/character.glb', fbx: false });
-    expect(BUILTIN_CHARACTERS[1]).toMatchObject({ id: 'ch14', name: 'CH14', fbx: true });
+    expect(BUILTIN_CHARACTERS[1]).toMatchObject({ id: 'ch14', name: 'Mouse', fbx: true });
     expect(BUILTIN_CHARACTERS[1].url).toContain('ch14');
     const file = readFileSync(new URL('../../assets/ch14.fbx', import.meta.url));
     expect(file.subarray(0, 19).toString()).toBe('Kaydara FBX Binary ');
@@ -19,8 +19,8 @@ describe('built-in characters', () => {
   it('marks the selected preset and preserves a separate upload action', () => {
     const html = renderToStaticMarkup(<CharacterPicker selected={BUILTIN_CHARACTERS[1]} disabled={false}
       onSelect={() => {}} onUpload={() => {}} />);
-    expect(html).toContain('Current: CH14');
-    expect(html).toMatch(/aria-pressed="true"[^>]*><span>CH14/);
+    expect(html).toContain('Current: Mouse');
+    expect(html).toMatch(/aria-pressed="true"[^>]*><span>Mouse/);
     expect(html).toMatch(/aria-pressed="false"[^>]*><span>Default character/);
     expect(html).toContain('Upload character…');
     expect(html).not.toContain('<img'); // opening the picker never preloads models

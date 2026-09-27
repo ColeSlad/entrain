@@ -77,13 +77,13 @@ redistribute or bundle them.
 
 ## 3. Built-in characters
 
-The Character menu offers the original default and **CH14** without an upload.
-The default still loads first; the approximately 30 MB CH14 FBX is downloaded
+The Character menu offers the original default and **Mouse** without an upload.
+The default still loads first; the approximately 30 MB Mouse FBX is downloaded
 and parsed only when selected. Both use the existing SMPL-to-Mixamo retargeter.
 No GPU job or generator connection is needed to switch characters. Custom
 GLB/GLTF/FBX uploads remain available under **Upload character…**.
 
-CH14 is a byte-for-byte copy of the supplied `Ch14_nonPBR.fbx` at
+Mouse is a byte-for-byte copy of the supplied `Ch14_nonPBR.fbx` at
 `assets/ch14.fbx`, including its embedded textures. All 22 supported body
 joints map to the retargeter. Its embedded animation clips are not played;
 the selected dance drives it. Source SHA-256:
