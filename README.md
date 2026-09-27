@@ -17,6 +17,9 @@ fallback.
 - The backend generates SMPL dance motion with EDGE on a Modal GPU.
 - The motion is retargeted onto a Mixamo character in the browser and played
   back in sync with the audio, with play/pause/scrub and beat markers.
+- Switch between **Default character** and the bundled **CH14** in the Character
+  menu, or upload your own rigged character. CH14 downloads only when selected;
+  switching keeps the current song, playback position, and dance settings.
 - Bring your own Mixamo character (glb or fbx), and download the result as a GLB
   with the animation baked in.
 - A multi-dancer mode spawns a field of characters with live, per-dancer tuning,
@@ -196,6 +199,7 @@ backend/
 reference/          smpl_to_mixamo_retarget.js (retarget reference)
 docs/               SETUP.md, HOSTING.md (Vercel + BYO GPU), BENCHMARK.md
 assets/character.glb  the default Mixamo character
+assets/ch14.fbx       the optional built-in CH14 (textures embedded; lazy-loaded)
 ```
 
 ## Notes

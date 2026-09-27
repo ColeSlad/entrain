@@ -90,6 +90,17 @@ button, input, summary { outline-offset: 4px; }
 .stage-button { color: var(--stage-muted); padding: 8px 11px; font-size: 12px; }
 .stage-button:hover:not(:disabled) { background: #252a33; color: var(--stage-text); }
 .stage-button.is-active { background: #30283f; color: #cbb5ff; }
+.character-picker { position: relative; }
+.character-picker summary { list-style: none; cursor: pointer; }
+.character-picker summary::-webkit-details-marker { display: none; }
+.character-picker summary[aria-disabled='true'] { opacity: .45; cursor: not-allowed; }
+.character-chevron { width: 12px; height: 12px; transform: rotate(90deg); }
+.character-options { position: absolute; top: calc(100% + 6px); right: 0; width: 220px; padding: 6px; border: 1px solid #363b47; border-radius: 12px; background: #1c1f26; color: var(--stage-text); box-shadow: 0 12px 32px #0006; }
+.character-current { padding: 8px 10px; color: var(--stage-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.character-option { width: 100%; min-height: 44px; justify-content: space-between; text-align: left; font-size: 13px; }
+.character-option:hover:not(:disabled) { background: #292d37; }
+.character-option[aria-pressed='true'] { color: #cbb5ff; }
+.character-upload { margin-top: 5px; border-top: 1px solid #363b47; border-radius: 0 0 8px 8px; justify-content: flex-start; }
 .stage-footer { position: absolute; z-index: 2; bottom: 12px; left: 20px; right: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; pointer-events: none; }
 .stage-footer button { pointer-events: auto; }
 .camera-hint { color: var(--stage-muted); font-size: 12px; }
@@ -232,6 +243,8 @@ input[type='range']:disabled::-moz-range-thumb { visibility: hidden; }
   .stage { flex: 1 0 auto; min-height: 440px; height: calc(100dvh - 320px); }
   .stage-toolbar { align-items: flex-start; padding: 12px; }
   .stage-actions { gap: 2px; }
+  .character-picker { position: static; }
+  .character-options { top: 100%; right: 12px; max-width: calc(100% - 24px); }
   .stage-button { padding: 8px; }
   .stage-heading { padding-top: 6px; }
   .stage-heading h1 { font-size: 13px; }
@@ -271,6 +284,7 @@ input[type='range']:disabled::-moz-range-thumb { visibility: hidden; }
   .stage-heading h1 { font-size: 12px; }
   .stage-button { gap: 5px; font-size: 11px; padding: 7px; }
   .stage-button .icon { width: 15px; height: 15px; }
+  .character-chevron { display: none; }
   .generator-dialog { padding: 20px; }
 }
 

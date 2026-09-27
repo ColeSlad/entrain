@@ -75,10 +75,23 @@ jukemirlib, and accelerate (run `accelerate config`, fp16). modal_app.py wraps
 this. The EDGE weights are for research and non-commercial use. Do not
 redistribute or bundle them.
 
-## 3. Mixamo character (the single fixed target rig)
+## 3. Built-in characters
 
-Our one fixed playback character. Mixamo assets are free to use, so unlike SMPL
-and EDGE this asset is committed.
+The Character menu offers the original default and **CH14** without an upload.
+The default still loads first; the approximately 30 MB CH14 FBX is downloaded
+and parsed only when selected. Both use the existing SMPL-to-Mixamo retargeter.
+No GPU job or generator connection is needed to switch characters. Custom
+GLB/GLTF/FBX uploads remain available under **Upload character…**.
+
+CH14 is a byte-for-byte copy of the supplied `Ch14_nonPBR.fbx` at
+`assets/ch14.fbx`, including its embedded textures. All 22 supported body
+joints map to the retargeter. Its embedded animation clips are not played;
+the selected dance drives it. Source SHA-256:
+`32a3b8f9e5b7a8118e526c351ebc9dde99ed490022e909296377fa1eafe75405`.
+The frontend build and `.vercelignore` include this specific asset, not the
+user's Downloads directory.
+
+To replace the original default:
 
 1. Mixamo (mixamo.com) is free with an Adobe account. Pick one character; Y Bot
    or X Bot are clean defaults. Download it in T-pose.

@@ -8,6 +8,7 @@
 !assets
 assets/*
 !assets/character.glb
+!assets/ch14.fbx
 !assets/demo
 assets/demo/*
 !assets/demo/chopin-motion.json

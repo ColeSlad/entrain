@@ -10,6 +10,7 @@ import type { Params } from './core/retargetCore';
 import { toMotionInput } from './core/motionInput';
 import { FieldWorker } from './core/fieldWorker';
 import { optimizeCharacter } from './optimizeCharacter';
+import { disposeCharacter } from './disposeCharacter';
 import type { Motion } from './api';
 
 export interface ViewerHandle {
@@ -226,7 +227,7 @@ const Viewer = forwardRef<ViewerHandle, {
     };
 
     function onTemplate(root: THREE.Object3D): void {
-      if (disposed) return;
+      if (disposed) { disposeCharacter(root); return; }
       optimizeCharacter(root);
       const built = buildSkeleton(root);
       const bounds = new THREE.Box3().setFromObject(root);
@@ -280,6 +281,7 @@ const Viewer = forwardRef<ViewerHandle, {
       sceneRef.current = null;
       worker.dispose();
       dancers.forEach(disposeDancer);
+      if (character) disposeCharacter(character.root);
       controls.dispose();
       grid.geometry.dispose();
       (grid.material as THREE.Material).dispose();
@@ -292,7 +294,7 @@ const Viewer = forwardRef<ViewerHandle, {
   return <div className="viewer" ref={mountRef}>
     {!loaded && <div className="viewer-message" role="status"><span className="spinner" />Loading character…</div>}
     {loaded && characterState.error && <div className="viewer-message viewer-message-error" role="status">
-      <strong>Couldn’t load this character</strong><p>Choose another rigged GLB, GLTF, or FBX file using Character above.</p>
+      <strong>Couldn’t load this character</strong><p>Use Character above to switch to a built-in character or upload a rigged GLB, GLTF, or FBX file.</p>
     </div>}
   </div>;
 });

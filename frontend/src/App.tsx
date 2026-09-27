@@ -10,6 +10,8 @@ import Icon from './Icon';
 import { defaultParams } from './retarget';
 import type { Params } from './core/retargetCore';
 import { DEMO_AUDIO_URL, DEMO_TITLE, useDemo } from './useDemo';
+import CharacterPicker from './CharacterPicker';
+import { BUILTIN_CHARACTERS, type CharacterChoice } from './characters';
 
 const NO_BEATS: number[] = [];
 
@@ -38,9 +40,7 @@ export default function App() {
   const [job, setJob] = useState<{ connection: GeneratorConnection; id: string; abort: AbortController } | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [characterUrl, setCharacterUrl] = useState('/character.glb');
-  const [characterName, setCharacterName] = useState('Default character');
-  const [characterFbx, setCharacterFbx] = useState(false);
+  const [character, setCharacter] = useState<CharacterChoice>(BUILTIN_CHARACTERS[0]);
   const [count, setCount] = useState(1);
   const [variation, setVariation] = useState(0);
   const [params, setParams] = useState<Params>(() => defaultParams());
@@ -53,6 +53,10 @@ export default function App() {
   useEffect(() => () => {
     if (generatedAudioUrl) URL.revokeObjectURL(generatedAudioUrl);
   }, [generatedAudioUrl]);
+
+  useEffect(() => () => {
+    if (character.url.startsWith('blob:')) URL.revokeObjectURL(character.url);
+  }, [character.url]);
 
   // Live tuning still goes to the motion worker; React only updates controls.
   const setParam = useCallback((key: 'rootUpright' | 'footLock' | 'recenterWin', value: number) =>
@@ -183,13 +187,8 @@ export default function App() {
   function onCharacterFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = '';
-    if (!file) return;
-    setCharacterName(file.name);
-    setCharacterFbx(file.name.toLowerCase().endsWith('.fbx'));
-    setCharacterUrl((previous) => {
-      if (previous.startsWith('blob:')) URL.revokeObjectURL(previous);
-      return URL.createObjectURL(file);
-    });
+    if (!file || exporting) return;
+    setCharacter({ id: 'upload', name: file.name, url: URL.createObjectURL(file), fbx: file.name.toLowerCase().endsWith('.fbx') });
   }
 
   async function onExport() {
@@ -235,12 +234,13 @@ export default function App() {
         <div className="stage-toolbar">
           <div className="stage-heading"><h1>{isDemo ? 'Demo preview' : 'Dance preview'}</h1><span className="dancer-count">{count} {count === 1 ? 'dancer' : 'dancers'}</span></div>
           <div className="stage-actions">
-            <button className="button stage-button" onClick={() => characterInputRef.current?.click()} disabled={exporting} title={`Change character · ${characterName}`}><Icon name="person" /><span>Character</span></button>
+            <CharacterPicker selected={character} disabled={exporting} onSelect={setCharacter}
+              onUpload={() => characterInputRef.current?.click()} />
             <button ref={settingsButtonRef} className={`button stage-button ${settingsOpen ? 'is-active' : ''}`} aria-expanded={settingsOpen}
               aria-controls="dance-settings" onClick={() => setSettingsOpen((previous) => !previous)}><Icon name="tune" /><span>Adjust dance</span></button>
           </div>
         </div>
-        <Viewer ref={viewerRef} characterUrl={characterUrl} characterFbx={characterFbx}
+        <Viewer ref={viewerRef} characterUrl={character.url} characterFbx={character.fbx}
           motion={motion} frame={frame} count={count} params={params} variation={variation} />
         {status && <div className="stage-notices">
           <div className={`notice ${statusError ? 'notice-error' : ''}`}>
@@ -286,7 +286,7 @@ export default function App() {
         else { setStatusError(true); setStatus('Could not play this audio file. Try another recording.'); }
       }} />
     <input ref={songInputRef} type="file" accept="audio/*" onChange={(event) => void onFile(event)} disabled={uploadDisabled} hidden aria-label="Upload song" />
-    <input ref={characterInputRef} type="file" accept=".glb,.gltf,.fbx" onChange={onCharacterFile} hidden aria-label="Upload character" />
+    <input ref={characterInputRef} type="file" accept=".glb,.gltf,.fbx" onChange={onCharacterFile} disabled={exporting} hidden aria-label="Upload character" />
     <GeneratorSettings connection={connection} disabled={busy || !!job || cancelling} open={generatorOpen} onClose={() => setGeneratorOpen(false)}
       onConnect={(next, info) => { setConnection(next); setGeneratorInfo(info); }} />
   </div>;
