@@ -127,6 +127,19 @@ tokens as `VITE_*` variables: those become public JavaScript. Answer **n** if th
 CLI asks to pull development environment variables. The Entrain token belongs
 only in your private Modal secret and the browser's generator connection panel.
 
+### Web Analytics
+
+The frontend includes `@vercel/analytics/react` once at the React root for
+automatic page-view tracking. Vite development mode uses Analytics development
+mode, which does not send analytics data. No custom events are added for songs,
+characters, or generator credentials.
+
+In the Vercel dashboard, open this project's **Analytics** tab and click
+**Enable** if it is not already enabled, then deploy the updated frontend.
+Visit the deployed site and check the Analytics dashboard for traffic. No
+analytics token or additional environment variable is required. See the
+[Vercel Web Analytics setup guide](https://vercel.com/docs/analytics/quickstart).
+
 ## 4. Connect and generate
 
 1. Open `https://entrain-rouge.vercel.app` and click **Connect generator**.
